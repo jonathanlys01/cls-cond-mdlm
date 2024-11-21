@@ -12,3 +12,6 @@ wheels/
 
 # Project-specific files
 outputs/
+
+# Symlink to db
+db

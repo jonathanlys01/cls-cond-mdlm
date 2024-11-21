@@ -12,6 +12,7 @@ import dataloader
 import diffusion
 import utils
 
+
 omegaconf.OmegaConf.register_new_resolver(
   'cwd', os.getcwd)
 omegaconf.OmegaConf.register_new_resolver(
@@ -26,7 +27,7 @@ def _load_from_checkpoint(config, tokenizer):
   if 'hf' in config.backbone:
     return diffusion.Diffusion(
       config, tokenizer=tokenizer).to('cuda')
-  
+
   return diffusion.Diffusion.load_from_checkpoint(
     config.eval.checkpoint_path,
     tokenizer=tokenizer,
@@ -189,7 +190,7 @@ def main(config):
   """Main entry point for training."""
   L.seed_everything(config.seed)
   _print_config(config, resolve=True, save_cfg=True)
-  
+
   logger = utils.get_logger(__name__)
   tokenizer = dataloader.get_tokenizer(config)
 

@@ -6,9 +6,10 @@ import flash_attn.layers.rotary
 import huggingface_hub
 import omegaconf
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
+from torch import nn
+
 
 # Flags required to enable jit fusion kernels
 torch._C._jit_set_profiling_mode(False)
