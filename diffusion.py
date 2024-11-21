@@ -364,8 +364,8 @@ class Diffusion(L.LightningModule):
     else:
       attention_mask = None
 
-    if 'labels' in batch:
-      labels = batch['labels']
+    if 'label' in batch:
+      labels = batch['label']
     else:
       labels = None
 

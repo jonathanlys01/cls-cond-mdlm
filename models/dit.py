@@ -199,6 +199,7 @@ class LabelEmbedder(nn.Module):
   def __init__(self, num_classes, cond_size, dropout_prob, zero_null=True):
     super().__init__()
     self.embedding_table = nn.Embedding(num_classes + 1, cond_size)
+    #padding_idx=num_classes)
     self.num_classes = num_classes
     self.dropout_prob = dropout_prob
 
@@ -206,9 +207,10 @@ class LabelEmbedder(nn.Module):
     nn.init.normal_(self.embedding_table.weight, std=0.02)
 
     # Zero out the null class embedding
+    # The padding_idx makes it so that the last embedding is always zero
+    # (no gradient update)
     if zero_null:
       nn.init.constant_(self.embedding_table.weight[-1], 0)
-      self.embedding_table.weight[0].requires_grad = False
 
   def _token_drop(self, labels):
     """Randomly drop class labels."""
@@ -352,8 +354,9 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
     self.sigma_map = TimestepEmbedder(config.model.cond_dim)
 
     # Does nothing if num_classes and/or label_dropout are not defined
-    n_classes = config.model.num_classes if hasattr(config.model, 'num_classes') else 0
-    dropout_p = config.model.label_dropout if hasattr(config.model, 'label_dropout') else 0
+    n_classes = config.data.num_classes if hasattr(config.data, 'num_classes') else 0
+    dropout_p = config.data.label_dropout if hasattr(config.data, 'label_dropout') else 0.0
+    print(f"n_classes: {n_classes}, dropout_p: {dropout_p}")
 
     self.label_embed = LabelEmbedder(n_classes, config.model.cond_dim, dropout_p)
 

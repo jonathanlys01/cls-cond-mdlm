@@ -40,7 +40,7 @@ def _print_config(
   resolve: bool = True,
   save_cfg: bool = True) -> None:
   """Prints content of DictConfig using Rich library and its tree structure.
-  
+
   Args:
     config (DictConfig): Configuration composed by Hydra.
     resolve (bool): Whether to resolve reference fields of DictConfig.

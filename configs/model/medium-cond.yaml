@@ -9,4 +9,3 @@ scale_by_sigma: True
 dropout: 0.1
 tie_word_embeddings: False
 label_dropout: 0.1
-num_classes: 2

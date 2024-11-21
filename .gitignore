@@ -15,3 +15,6 @@ outputs/
 
 # Symlink to db
 db
+
+# Slurm logs
+slurm-logs

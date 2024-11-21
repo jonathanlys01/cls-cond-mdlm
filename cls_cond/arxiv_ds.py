@@ -8,15 +8,19 @@ from datasets import Dataset, load_dataset
 from tqdm import tqdm
 from transformers import AutoTokenizer
 
-from dataloader import scientific_papers_detokenizer
+import dataloader
 
 
 DS_NAME = 'gfissore/arxiv-abstracts-2021'
 CACHE_DIR = os.path.expanduser("~/cls-cond-mdlm/db/arxiv-abs")
-CAT_DIR = 'categories.json'
+CAT_DIR = os.path.expanduser("~/cls-cond-mdlm/cls_cond/categories.json")
+
 CAT_COL = 'categories'
 ABS_COL = 'abstract'
 BLOCK_SIZE  = 1024
+
+# Default number of classes to keep
+DEFAULT_TOPK = 20
 
 
 def _preprocess(example, tokenizer: AutoTokenizer):
@@ -79,7 +83,7 @@ def preprocess() -> int:
         return row
 
     def arxiv_detokenizer(x):
-        x = scientific_papers_detokenizer(x)
+        x = dataloader.scientific_papers_detokenizer(x)
         # Remove newlines (randomly because of the parsing script)
         x = x.replace("\n", " ")
         return x
@@ -163,11 +167,12 @@ def preprocess() -> int:
     ds.to_parquet(output_path)
     return os.system("du -sh " + output_path)
 
-def get_arxiv(top_k: int = None) -> Dataset:
+def get_arxiv(mode, top_k=DEFAULT_TOPK) -> Dataset:
     """
     Load the preprocessed arXiv dataset
     Args:
-        top_k: number of classes to keep, ordered by frequency
+        mode: "train" or "eval" (split is approx 95/5)
+        top_k: number of classes to keep, ordered by frequency (-1 keeps all)
     Returns:
         dataset: the preprocessed arXiv dataset
     """
@@ -178,17 +183,42 @@ def get_arxiv(top_k: int = None) -> Dataset:
 
 
     dataset = load_dataset("parquet", data_files=input_path)["train"]
+    len_ds = len(dataset)
 
-    if top_k:
-        assert os.path.exists(CAT_DIR), "Categories file not found"
-        with open(CAT_DIR, "r") as f:
-            ALL_CAT = json.load(f)
+    if mode == "train":
+        dataset = dataset.select(range(int(len_ds * 0.95)))
+    elif mode == "validation":
+        dataset = dataset.select(range(int(len_ds * 0.95), len_ds))
+    else:
+        raise ValueError("Invalid mode. Please choose 'train' or 'validation'")
 
-        top_cats = set(sorted(ALL_CAT, key=ALL_CAT.get, reverse=True)[:top_k])
-        dataset = dataset.filter(lambda x: x["label"] in top_cats)
+    assert os.path.exists(CAT_DIR), "Categories file not found"
+    with open(CAT_DIR, "r") as f:
+        ALL_CAT = json.load(f)
 
+    top_cats = sorted(ALL_CAT, key=ALL_CAT.get, reverse=True)[:top_k]
+    top_cats = {top_cats[i]: i for i in range(len(top_cats))}
 
-    dataset.set_format(type="torch", columns=["input_ids", "label"])
+    dataset = dataset.filter(lambda x: x["label"] in top_cats,
+                             num_proc=min(os.cpu_count(), 8))
+
+    # create only one attention mask for the whole block
+    attn_mask = [1 for _ in range(BLOCK_SIZE)]
+
+    def _add_att_mask(x):
+
+        x["attention_mask"] = attn_mask
+        x["label"] = top_cats[x["label"]]
+
+        return x
+
+    dataset = dataset.map(_add_att_mask,
+                          num_proc=min(os.cpu_count(), 8),
+                            desc="Adding attention mask + label encoding"
+                            )
+
+    dataset.set_format(type="torch", columns=["input_ids", "label", "attention_mask"])
+
 
     return dataset
 

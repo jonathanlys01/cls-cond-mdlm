@@ -303,7 +303,7 @@ def get_dataset(
     block_size=1024, num_proc=len(os.sched_getaffinity(0)), streaming=False):
 
   if dataset_name == 'arxiv-abs':
-    return get_arxiv()
+    return get_arxiv(mode=mode)
 
   if wrap:
     filename = f'{dataset_name}_{mode}_bs{block_size}_wrapped.dat'
