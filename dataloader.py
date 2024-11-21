@@ -17,6 +17,8 @@ import torch
 import transformers
 
 import utils
+from cls_cond.arxiv_ds import get_arxiv
+
 
 LOGGER = utils.get_logger(__name__)
 
@@ -204,17 +206,13 @@ def get_text8_dataset(cache_dir, max_seq_length=256,
   else:
     cache_dir = f'{cache_dir}/text8-crop-train'
   split_names = ['train', 'validation', 'test']
-  if not all([
-    utils.fsspec_exists(os.path.join(cache_dir, split))
-    for split in split_names
-  ]):
+  if not all(utils.fsspec_exists(os.path.join(cache_dir, split))
+    for split in split_names):
     # Check if raw data exists
     raw_cache_dir = os.path.join(cache_dir, 'raw_data')
-    if not all([
-      utils.fsspec_exists(
+    if not all(utils.fsspec_exists(
         os.path.join(raw_cache_dir, f'text8.{split}.txt'))
-      for split in split_names
-    ]):
+      for split in split_names):
       if not utils.fsspec_exists(
         os.path.join(raw_cache_dir, 'text8.zip')):
         utils.fsspec_mkdirs(raw_cache_dir, exist_ok=True)
@@ -258,7 +256,7 @@ def get_text8_dataset(cache_dir, max_seq_length=256,
 
     dataset_dict = {}
     for k, v in splits.items():
-      if k == 'train' and crop_train == True:
+      if k == 'train' and crop_train is True:
         chunk_size = 2 * max_seq_length
       else:
         chunk_size = max_seq_length
@@ -303,12 +301,16 @@ def _group_texts(examples, block_size, bos, eos):
 def get_dataset(
     dataset_name, tokenizer, wrap, mode, cache_dir,
     block_size=1024, num_proc=len(os.sched_getaffinity(0)), streaming=False):
+
+  if dataset_name == 'arxiv-abs':
+    return get_arxiv()
+
   if wrap:
     filename = f'{dataset_name}_{mode}_bs{block_size}_wrapped.dat'
   else:
     filename = f'{dataset_name}_{mode}_bs{block_size}_unwrapped.dat'
   _path = os.path.join(cache_dir, filename)
-  
+
   if utils.fsspec_exists(_path):
     LOGGER.info(f'Loading data from: {_path}')
     return datasets.load_from_disk(_path).with_format('torch')
@@ -318,7 +320,7 @@ def get_dataset(
   if mode == 'train' and crop_train:
     # double block size for sub-sampling
     block_size *= 2
-  
+
   if dataset_name == 'wikitext103':
     dataset = datasets.load_dataset(
       'wikitext',
@@ -401,7 +403,7 @@ def get_dataset(
         text[i] = detokenizer(t)
       return text
     return detok
-  
+
   EOS = tokenizer.encode(tokenizer.eos_token)[0]
   BOS = tokenizer.encode(tokenizer.bos_token)[0]
 
@@ -412,7 +414,7 @@ def get_dataset(
       text = example['article']
     else:
       text = example['text']
-    
+
     if detokenizer is not None:
       text = _apply_detokenizer(detokenizer)(text)
 
@@ -520,7 +522,7 @@ def get_tokenizer(config):
     tokenizer.add_special_tokens({'pad_token': '[PAD]'})
 
   return tokenizer
-    
+
 
 def get_dataloaders(config, tokenizer, skip_train=False,
                     skip_valid=False, valid_seed=None):
@@ -550,7 +552,7 @@ def get_dataloaders(config, tokenizer, skip_train=False,
       wrap=config.data.wrap,
       cache_dir=config.data.cache_dir,
       block_size=config.model.length)
-  
+
   if config.data.valid in ['text8', 'lm1b', 'ag_news']:
     validation_split = 'test'
   else:
