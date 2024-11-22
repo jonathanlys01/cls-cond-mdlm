@@ -313,8 +313,16 @@ class Diffusion(L.LightningModule):
   def forward(self, x, sigma, labels=None):
     """Returns log score."""
     sigma = self._process_sigma(sigma)
+    assert hasattr(self.config.sampling, 'cfg_scale'), 'config.sampling.cfg_scale not defined'
+    cfg = self.config.sampling.cfg_scale
     with torch.cuda.amp.autocast(dtype=torch.float32):
-      logits = self.backbone(x, sigma, labels=labels)
+      if self.backbone.training or cfg is None or labels is None:
+        logits = self.backbone(x, sigma, labels=labels)
+      else: # eval mode
+        logits = self.backbone.forward_with_cfg(x,
+                                                sigma,
+                                                labels=labels,
+                                                cfg_scale=self.config.sampling.cfg_scale)
 
     if self.parameterization == 'subs':
       return self._subs_parameterization(logits=logits,
@@ -596,7 +604,7 @@ class Diffusion(L.LightningModule):
     return self.mask_index * torch.ones(
       * batch_dims, dtype=torch.int64)
 
-  def _ddpm_caching_update(self, x, t, dt, p_x0=None):
+  def _ddpm_caching_update(self, x, t, dt, p_x0=None, labels=None):
     assert self.config.noise.type == 'loglinear'
     sigma_t, _ = self.noise(t)
     if t.ndim > 1:
@@ -606,7 +614,7 @@ class Diffusion(L.LightningModule):
     move_chance_s = (t - dt)[:, None, None]
     assert move_chance_t.ndim == 3, move_chance_t.shape
     if p_x0 is None:
-      p_x0 = self.forward(x, sigma_t).exp()
+      p_x0 = self.forward(x, sigma_t, labels=labels).exp()
 
     assert move_chance_t.ndim == p_x0.ndim
     q_xs = p_x0 * (move_chance_t - move_chance_s)
@@ -616,7 +624,7 @@ class Diffusion(L.LightningModule):
     copy_flag = (x != self.mask_index).to(x.dtype)
     return p_x0, copy_flag * x + (1 - copy_flag) * _x
 
-  def _ddpm_update(self, x, t, dt):
+  def _ddpm_update(self, x, t, dt, labels):
     sigma_t, _ = self.noise(t)
     sigma_s, _ = self.noise(t - dt)
     if sigma_t.ndim > 1:
@@ -630,7 +638,7 @@ class Diffusion(L.LightningModule):
     move_chance_t = move_chance_t[:, None, None]
     move_chance_s = move_chance_s[:, None, None]
     unet_conditioning = sigma_t
-    log_p_x0 = self.forward(x, unet_conditioning)
+    log_p_x0 = self.forward(x, unet_conditioning, labels=labels)
     assert move_chance_t.ndim == log_p_x0.ndim
     # Technically, this isn't q_xs since there's a division
     # term that is missing. This division term doesn't affect
@@ -662,7 +670,7 @@ class Diffusion(L.LightningModule):
     return x
 
   @torch.no_grad()
-  def _sample(self, num_steps=None, eps=1e-5):
+  def _sample(self, num_steps=None, eps=1e-5, labels=None):
     """Generate samples from the model."""
     batch_size_per_gpu = self.config.loader.eval_batch_size
     if self.parameterization == 'ar':
@@ -682,29 +690,29 @@ class Diffusion(L.LightningModule):
       t = timesteps[i] * torch.ones(
         x.shape[0], 1, device=self.device)
       if self.sampler == 'ddpm':
-        x = self._ddpm_update(x, t, dt)
+        x = self._ddpm_update(x, t, dt, labels=labels)
       elif self.sampler == 'ddpm_cache':
         p_x0_cache, x_next = self._ddpm_caching_update(
-          x, t, dt, p_x0=p_x0_cache)
+          x, t, dt, p_x0=p_x0_cache, labels=labels)
         if (not torch.allclose(x_next, x)
             or self.time_conditioning):
           # Disable caching
           p_x0_cache = None
         x = x_next
       else:
-        x = self._analytic_update(x, t, dt)
+        x = self._analytic_update(x, t, dt, labels=labels)
 
     if self.config.sampling.noise_removal:
       t = timesteps[-1] * torch.ones(x.shape[0], 1,
                                      device=self.device)
       if self.sampler == 'analytic':
-        x = self._denoiser_update(x, t)
+        x = self._denoiser_update(x, t, labels=labels)
       else:
         unet_conditioning = self.noise(t)[0]
-        x = self.forward(x, unet_conditioning).argmax(dim=-1)
+        x = self.forward(x, unet_conditioning, labels=labels).argmax(dim=-1)
     return x
 
-  def restore_model_and_sample(self, num_steps, eps=1e-5):
+  def restore_model_and_sample(self, num_steps, eps=1e-5, labels=None):
     """Generate samples from the model."""
     # Lightning auto-casting is not working in this method for some reason
     if self.ema:
@@ -716,7 +724,7 @@ class Diffusion(L.LightningModule):
         self.noise.parameters()))
     self.backbone.eval()
     self.noise.eval()
-    samples = self._sample(num_steps=num_steps, eps=eps)
+    samples = self._sample(num_steps=num_steps, eps=eps, labels=labels)
     if self.ema:
       self.ema.restore(itertools.chain(
         self.backbone.parameters(),
@@ -725,8 +733,8 @@ class Diffusion(L.LightningModule):
     self.noise.train()
     return samples
 
-  def get_score(self, x, sigma):
-    model_output = self.forward(x, sigma)
+  def get_score(self, x, sigma, labels=None):
+    model_output = self.forward(x, sigma, labels=labels)
     if self.parameterization == 'subs':
       # score(x, t) = p_t(y) / p_t(x)
       # => log score(x, t) = log p_t(y) - log p_t(x)
@@ -777,18 +785,18 @@ class Diffusion(L.LightningModule):
     score[..., self.mask_index] += extra_const
     return score
 
-  def _analytic_update(self, x, t, step_size):
+  def _analytic_update(self, x, t, step_size, labels):
     curr_sigma, _ = self.noise(t)
     next_sigma, _ = self.noise(t - step_size)
     dsigma = curr_sigma - next_sigma
-    score = self.get_score(x, curr_sigma)
+    score = self.get_score(x, curr_sigma, labels)
     stag_score = self._staggered_score(score, dsigma)
     probs = stag_score * self._transp_transition(x, dsigma)
     return _sample_categorical(probs)
 
-  def _denoiser_update(self, x, t):
+  def _denoiser_update(self, x, t, labels):
     sigma, _ = self.noise(t)
-    score = self.get_score(x, sigma)
+    score = self.get_score(x, sigma, labels)
     stag_score = self._staggered_score(score, sigma)
     probs = stag_score * self._transp_transition(x, sigma)
     probs[..., self.mask_index] = 0

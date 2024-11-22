@@ -1,7 +1,7 @@
 defaults:
   - _self_
   - /callbacks: [checkpoint_every_n_steps, checkpoint_monitor, learning_rate_monitor]
-  - /data: openwebtext
+  - /data: arxiv-abs
   - /model: small
   - /strategy: ddp
   - /noise: loglinear
@@ -36,6 +36,12 @@ sampling:
   semi_ar: False
   stride_length: 1
   num_strides: 1
+  authorized_labels:
+  - 8 # cs.AI
+  - 9 # cs.CL 
+  - 4 # cs.LG
+  cfg_scale: 2
+  # this should output a text that talks about the topic of machine learning
 
 training:
   ema: 0.9999
@@ -69,11 +75,11 @@ trainer:
   gradient_clip_val: 1.0
   precision: 'bf16'
   num_sanity_val_steps: 2
-  max_steps: 1_000_000
+  max_steps: 50_000
   log_every_n_steps: 10
   limit_train_batches: 1.0   # train on full dataset, can be used to toggle quick run
   limit_val_batches: 1.0     # validate on full dataset, can be used to toggle quick run
-  val_check_interval: 10000
+  val_check_interval: 1_000
 
 wandb:
   project: text-diffusion

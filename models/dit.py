@@ -354,8 +354,9 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
     self.sigma_map = TimestepEmbedder(config.model.cond_dim)
 
     # Does nothing if num_classes and/or label_dropout are not defined
-    n_classes = config.data.num_classes if hasattr(config.data, 'num_classes') else 0
-    dropout_p = config.data.label_dropout if hasattr(config.data, 'label_dropout') else 0.0
+    n_classes = config.model.num_classes if hasattr(config.model, 'num_classes') else 0
+    dropout_p = config.model.label_dropout if hasattr(config.model, 'label_dropout') else 0.0
+    # WARNING: Always make sure that the number of classes of the dataset is correct
     print(f"n_classes: {n_classes}, dropout_p: {dropout_p}")
 
     self.label_embed = LabelEmbedder(n_classes, config.model.cond_dim, dropout_p)
@@ -400,7 +401,6 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
 
     return x
 
-  # TODO: test this
   def forward_with_cfg(self, indices, sigma, labels, cfg_scale):
     indices = torch.cat([indices, indices], dim=0)
     sigma = torch.cat([sigma, sigma], dim=0)

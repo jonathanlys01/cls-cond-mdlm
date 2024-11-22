@@ -1,4 +1,5 @@
 import os
+import random
 
 import fsspec
 import hydra
@@ -85,6 +86,7 @@ def _print_batch(train_ds, valid_ds, tokenizer, k=64):
 
 
 def generate_samples(config, logger, tokenizer):
+  authorized_labels = config.sampling.authorized_labels
   logger.info('Generating samples.')
   model = _load_from_checkpoint(config=config,
                                 tokenizer=tokenizer)
@@ -107,8 +109,11 @@ def generate_samples(config, logger, tokenizer):
       # and diffusion.compute_generative_perplexity() discards
       # any text after the first EOS token.
     else:
+      labels = [random.choice(authorized_labels) for _ in range(config.loader.eval_batch_size)]
+      labels = torch.tensor(labels).to('cuda')
       samples = model.restore_model_and_sample(
-        num_steps=config.sampling.steps)
+        num_steps=config.sampling.steps,
+        labels=labels)
       text_samples = model.tokenizer.batch_decode(samples)
       model.compute_generative_perplexity(text_samples)
   print('Text samples:', text_samples)
@@ -195,7 +200,13 @@ def main(config):
   tokenizer = dataloader.get_tokenizer(config)
 
   if config.mode == 'sample_eval':
-    generate_samples(config, logger, tokenizer)
+    gen_texts = generate_samples(config, logger, tokenizer)
+    # write generated samples to file
+    with fsspec.open(
+      '{}/generated_samples.txt'.format(
+        config.checkpointing.save_dir), 'w') as fp:
+      for text in gen_texts:
+        fp.write(text + '\n')
   elif config.mode == 'ppl_eval':
     _ppl_eval(config, logger, tokenizer)
   else:

@@ -17,7 +17,7 @@ import torch
 import transformers
 
 import utils
-from cls_cond.arxiv_ds import get_arxiv
+from cls_cond.arxiv_abs import get_arxiv
 
 
 LOGGER = utils.get_logger(__name__)
