@@ -7,42 +7,33 @@ from tqdm import tqdm
 from transformers import AutoTokenizer
 
 import dataloader
+from cls_cond.utils import tokenize
 
 
 DS_NAME = "ccdv/arxiv-classification"
 CACHE_DIR = os.path.expanduser("~/cls-cond-mdlm/db/arxiv-cls")
 
 
-CAT_COL = 'label'
-ABS_COL = 'text'
-BLOCK_SIZE  = 1024
+CAT_COL = "label"
+ABS_COL = "text"
+BLOCK_SIZE = 1024
 
 # TODO: fix the max context of the TOKENIZER
 
 
-CAT_MAP = {0: 'math.AC',
-           1: 'cs.CV',
-           2: 'cs.AI',
-           3: 'cs.SY',
-           4: 'math.GR',
-           5: 'cs.CE',
-           6: 'cs.PL',
-           7: 'cs.IT',
-           8: 'cs.DS',
-           9: 'cs.NE',
-           10: 'math.ST',
+CAT_MAP = {
+    0: "math.AC",
+    1: "cs.CV",
+    2: "cs.AI",
+    3: "cs.SY",
+    4: "math.GR",
+    5: "cs.CE",
+    6: "cs.PL",
+    7: "cs.IT",
+    8: "cs.DS",
+    9: "cs.NE",
+    10: "math.ST",
 }
-
-
-def _preprocess(example, tokenizer: AutoTokenizer):
-        # Helper function to tokenize the text
-        text = example["text"]
-        example["input_ids"] = tokenizer(text,
-                        truncation=True,
-                        add_special_tokens=True).input_ids
-        return example
-
-
 
 
 def preprocess(mode) -> int:
@@ -61,7 +52,6 @@ def preprocess(mode) -> int:
         int: The size of the output file in human-readable format.
     """
 
-
     def arxiv_detokenizer(x):
         x = dataloader.scientific_papers_detokenizer(x)
         x = x.replace("\n", " ")
@@ -74,25 +64,22 @@ def preprocess(mode) -> int:
         ds_2 = load_dataset(DS_NAME, cache_dir=CACHE_DIR)["test"]
         dataset = concatenate_datasets([ds_1, ds_2])
 
-
     dataset = dataset.map(
         lambda x: {
-            CAT_COL: x[CAT_COL], # copy the category
-            "text": arxiv_detokenizer(x[ABS_COL])
-        }, num_proc=8, desc="Detokenizing text"
+            CAT_COL: x[CAT_COL],  # copy the category
+            "text": arxiv_detokenizer(x[ABS_COL]),
+        },
+        num_proc=8,
+        desc="Detokenizing text",
     )
 
-
     tokenizer = AutoTokenizer.from_pretrained("gpt2")
-    tokenizer.add_special_tokens({'pad_token': '[PAD]'})
-    tokenizer.padding_side = 'right'
-    tokenizer.truncation_side = 'right'
+    tokenizer.add_special_tokens({"pad_token": "[PAD]"})
+    tokenizer.padding_side = "right"
+    tokenizer.truncation_side = "right"
 
     tokenized_ds = dataset.map(
-        partial(_preprocess, tokenizer=tokenizer),
-        batched=True,
-        num_proc=8,
-        desc="Tokenizing text"
+        partial(tokenize, tokenizer=tokenizer), batched=True, num_proc=8, desc="Tokenizing text"
     ).to_pandas()
 
     print(dataset.cleanup_cache_files())
@@ -106,12 +93,11 @@ def preprocess(mode) -> int:
     final_input_ids = []
     final_labels = []
 
-    new_block_size = BLOCK_SIZE - 2 # BOS and EOS tokens
+    new_block_size = BLOCK_SIZE - 2  # BOS and EOS tokens
 
     current = {label: [] for label in CAT_MAP}
 
     for i, row in tqdm(tokenized_ds.iterrows(), total=len(tokenized_ds), desc="Creating blocks"):
-
         text = row["input_ids"]
         label = row["label"]
 
@@ -136,14 +122,12 @@ def preprocess(mode) -> int:
             final_input_ids.append([BOS] + current[label] + [EOS])
             final_labels.append(label)
 
-    ds = pd.DataFrame({
-        "input_ids": final_input_ids,
-        "label": final_labels
-    })
+    ds = pd.DataFrame({"input_ids": final_input_ids, "label": final_labels})
 
     output_path = os.path.join(CACHE_DIR, f"arxiv-cls-{mode}.parquet")
     ds.to_parquet(output_path)
     return os.system("du -sh " + output_path)
+
 
 def get_arxiv_cls_categories(mode) -> dict:
     """
@@ -154,7 +138,7 @@ def get_arxiv_cls_categories(mode) -> dict:
         dataset: the preprocessed arXiv dataset
     """
 
-    input_paths = {mode:os.path.join(CACHE_DIR, f"arxiv-cls-{mode}.parquet") for mode in ["train", "validation"]}
+    input_paths = {mode: os.path.join(CACHE_DIR, f"arxiv-cls-{mode}.parquet") for mode in ["train", "validation"]}
 
     all_exist = True
     for mode_ in ["train", "validation"]:
@@ -163,7 +147,6 @@ def get_arxiv_cls_categories(mode) -> dict:
             all_exist = False
     if not all_exist:
         raise FileNotFoundError("Dataset not found. Please preprocess the dataset first.")
-
 
     dataset = load_dataset("parquet", data_files=input_paths)[mode]
 
@@ -174,13 +157,9 @@ def get_arxiv_cls_categories(mode) -> dict:
         x["attention_mask"] = attn_mask
         return x
 
-    dataset = dataset.map(_add_att_mask,
-                          num_proc=min(os.cpu_count(), 8),
-                            desc="Adding attention mask"
-                            )
+    dataset = dataset.map(_add_att_mask, num_proc=min(os.cpu_count(), 8), desc="Adding attention mask")
 
     dataset.set_format(type="torch", columns=["input_ids", "label", "attention_mask"])
-
 
     return dataset
 
@@ -211,5 +190,3 @@ if __name__ == "__main__":
     ids = valid_ds[0]["input_ids"]
     print(len(ids))
     print(tokenizer.decode(ids))
-
-
