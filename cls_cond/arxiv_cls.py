@@ -1,3 +1,4 @@
+import argparse
 import os
 from functools import partial
 
@@ -7,7 +8,7 @@ from tqdm import tqdm
 from transformers import AutoTokenizer
 
 import dataloader
-from cls_cond.utils import tokenize
+from cls_cond.token_utils import chunked_tokenize
 
 
 DS_NAME = "ccdv/arxiv-classification"
@@ -17,8 +18,6 @@ CACHE_DIR = os.path.expanduser("~/cls-cond-mdlm/db/arxiv-cls")
 CAT_COL = "label"
 ABS_COL = "text"
 BLOCK_SIZE = 1024
-
-# TODO: fix the max context of the TOKENIZER
 
 
 CAT_MAP = {
@@ -79,7 +78,10 @@ def preprocess(mode) -> int:
     tokenizer.truncation_side = "right"
 
     tokenized_ds = dataset.map(
-        partial(tokenize, tokenizer=tokenizer), batched=True, num_proc=8, desc="Tokenizing text"
+        partial(chunked_tokenize,
+                tokenizer=tokenizer,
+                max_len=BLOCK_SIZE // 2
+                ), num_proc=8, desc="Tokenizing text"
     ).to_pandas()
 
     print(dataset.cleanup_cache_files())
@@ -133,7 +135,7 @@ def get_arxiv_cls_categories(mode) -> dict:
     """
     Load the preprocessed arXiv dataset
     Args:
-        mode: "train" or "eval"
+        mode: "train" or "validation"
     Returns:
         dataset: the preprocessed arXiv dataset
     """
@@ -150,7 +152,7 @@ def get_arxiv_cls_categories(mode) -> dict:
 
     dataset = load_dataset("parquet", data_files=input_paths)[mode]
 
-    # only create tje attn mask once
+    # only create the attn mask once
     attn_mask = [1 for _ in range(BLOCK_SIZE)]
 
     def _add_att_mask(x):
@@ -165,9 +167,13 @@ def get_arxiv_cls_categories(mode) -> dict:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Preprocess the arXiv dataset for classification.")
+    parser.add_argument("--force", action="store_true", help="Force preprocessing even if the dataset already exists.")
+    args = parser.parse_args()
+
     template = "arxiv-cls-{mode}.parquet"
     for mode in ["train", "validation"]:
-        if os.path.exists(os.path.join(CACHE_DIR, template.format(mode=mode))):
+        if os.path.exists(os.path.join(CACHE_DIR, template.format(mode=mode))) and not args.force:
             print(f"Dataset already preprocessed for {mode}.")
         else:
             print(f"Preprocessing {mode} dataset.")

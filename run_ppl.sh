@@ -8,9 +8,10 @@ python main.py \
   eval.checkpoint_path=$CPT \
   model.length=1024  \
   sampling.predictor=ddpm_cache  \
-  sampling.steps=1000 \
   loader.eval_batch_size=1 \
   sampling.num_sample_batches=10 \
-  backbone=dit # hf_dit
+  backbone=dit \
+  sampling.steps=50 # default 128
 
+  # backbone=hf_dit \
   #mode=sample_eval \

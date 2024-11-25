@@ -1,13 +1,17 @@
 import os
 import random
+import time
 
 import fsspec
 import hydra
 import lightning as L
+import numpy as np
 import omegaconf
+import pandas as pd
 import rich.syntax
 import rich.tree
 import torch
+from tqdm import tqdm
 
 import dataloader
 import diffusion
@@ -122,6 +126,72 @@ def generate_samples(config, logger, tokenizer):
           model.gen_ppl_metric.compute())
   return text_samples
 
+
+def _sweep_timesteps(config, logger, tokenizer):
+  logger.info('Sweeping timesteps.')
+  model = _load_from_checkpoint(config=config,
+                                tokenizer=tokenizer)
+
+  ds_timestep = []
+  ds_time = []
+  ds_ppl = []
+
+  if config.eval.disable_ema:
+    logger.info('Disabling EMA.')
+    model.ema = None
+
+  log_min_timesteps = np.log2(config.sweep.min_timesteps)
+  log_max_timesteps = np.log2(config.sweep.max_timesteps)
+
+  pbar = tqdm(
+    np.linspace(
+      log_min_timesteps, log_max_timesteps, config.sweep.num_samples),
+    total=config.sweep.num_samples,
+    desc='Sweeping timesteps')
+
+  for log_timesteps in pbar:
+
+    model.gen_ppl_metric.reset()
+
+    timesteps = int(2 ** log_timesteps)
+    total_time = 0
+    assert config.sampling.semi_ar is False, 'Semi-AR not supported for sweep.'
+
+
+    for label in config.sampling.authorized_labels:
+
+      start = time.time()
+
+      labels = [label for _ in range(config.loader.eval_batch_size)]
+      labels = torch.tensor(labels).to('cuda')
+
+      samples = model.restore_model_and_sample(
+        num_steps=timesteps,
+        labels=labels)
+
+      end = time.time()
+      total_time += (end - start)
+      text_samples = model.tokenizer.batch_decode(samples)
+      model.compute_generative_perplexity(text_samples)
+
+    ppl = model.gen_ppl_metric.compute().item()
+    pbar.set_postfix({'timesteps': timesteps, 'ppl': ppl, 'time': total_time})
+
+    ds_time.append(total_time)
+    ds_timestep.append(timesteps)
+    ds_ppl.append(ppl)
+
+  sweep_timesteps = pd.DataFrame({
+    'timesteps': ds_timestep,
+    'time': ds_time,
+    'ppl': ds_ppl
+  })
+
+  sweep_timesteps.to_csv(
+    f'{config.checkpointing.save_dir}/sweep_timesteps.csv',
+    index=False)
+
+
 def _ppl_eval(config, logger, tokenizer):
   logger.info('Starting Zero Shot Eval.')
 
@@ -209,6 +279,8 @@ def main(config):
         fp.write(text + '\n')
   elif config.mode == 'ppl_eval':
     _ppl_eval(config, logger, tokenizer)
+  elif config.mode == 'sweep_timesteps':
+    _sweep_timesteps(config, logger, tokenizer)
   else:
     _train(config, logger, tokenizer)
 

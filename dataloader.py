@@ -17,7 +17,8 @@ import torch
 import transformers
 
 import utils
-from cls_cond.arxiv_abs import get_arxiv
+from cls_cond.arxiv_abs import get_arxiv_abs
+from cls_cond.arxiv_cls import get_arxiv_cls_categories
 
 
 LOGGER = utils.get_logger(__name__)
@@ -303,7 +304,9 @@ def get_dataset(
     block_size=1024, num_proc=len(os.sched_getaffinity(0)), streaming=False):
 
   if dataset_name == 'arxiv-abs':
-    return get_arxiv(mode=mode)
+    return get_arxiv_abs(mode=mode)
+  elif dataset_name == 'arxiv-cls':
+    return get_arxiv_cls_categories(mode=mode)
 
   if wrap:
     filename = f'{dataset_name}_{mode}_bs{block_size}_wrapped.dat'

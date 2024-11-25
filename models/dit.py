@@ -354,10 +354,15 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
     self.sigma_map = TimestepEmbedder(config.model.cond_dim)
 
     # Does nothing if num_classes and/or label_dropout are not defined
-    n_classes = config.model.num_classes if hasattr(config.model, 'num_classes') else 0
-    dropout_p = config.model.label_dropout if hasattr(config.model, 'label_dropout') else 0.0
+    if hasattr(config.model, 'num_classes') and hasattr(config.model, 'label_dropout'):
+      assert config.model.num_classes == config.data.num_classes, "num_classes must match the dataset"
+      n_classes = config.model.num_classes
+      dropout_p = config.model.label_dropout
+    else:
+      n_classes = 0
+      dropout_p = 0.0
     # WARNING: Always make sure that the number of classes of the dataset is correct
-    print(f"n_classes: {n_classes}, dropout_p: {dropout_p}")
+    print(f"Loaded/init with n_classes: {n_classes}, dropout_p: {dropout_p}")
 
     self.label_embed = LabelEmbedder(n_classes, config.model.cond_dim, dropout_p)
 

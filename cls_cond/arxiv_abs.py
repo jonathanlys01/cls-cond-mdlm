@@ -8,8 +8,8 @@ from datasets import Dataset, load_dataset
 from tqdm import tqdm
 from transformers import AutoTokenizer
 
-from cls_cond.utils import tokenize
 import dataloader
+from cls_cond.token_utils import chunked_tokenize
 
 
 DS_NAME = "gfissore/arxiv-abstracts-2021"
@@ -100,7 +100,10 @@ def preprocess() -> int:
     tokenizer.truncation_side = "right"
 
     tokenized_ds = dataset.map(
-        partial(tokenize, tokenizer=tokenizer), batched=True, num_proc=8, desc="Tokenizing abstracts"
+        partial(chunked_tokenize,
+                tokenizer=tokenizer,
+                max_len=BLOCK_SIZE // 2
+                ), num_proc=8, desc="Tokenizing abstracts"
     ).to_pandas()
 
     dataset.cleanup_cache_files()
@@ -150,7 +153,7 @@ def preprocess() -> int:
     return os.system("du -sh " + output_path)
 
 
-def get_arxiv(mode, top_k=DEFAULT_TOPK) -> Dataset:
+def get_arxiv_abs(mode, top_k=DEFAULT_TOPK) -> Dataset:
     """
     Load the preprocessed arXiv dataset
     Args:

@@ -37,11 +37,15 @@ sampling:
   stride_length: 1
   num_strides: 1
   authorized_labels:
-  - 8 # cs.AI
-  - 9 # cs.CL 
-  - 4 # cs.LG
+  - 0
+  - 1
   cfg_scale: 2
-  # this should output a text that talks about the topic of machine learning
+
+sweep:
+  min_timesteps: 1
+  max_timesteps: 10_000
+  num_samples: 100 
+
 
 training:
   ema: 0.9999
@@ -53,7 +57,7 @@ training:
 eval:
   checkpoint_path: ''  # Used to evaluate a checkpoint after training.
   disable_ema: False
-  compute_generative_perplexity: False
+  compute_generative_perplexity: True
   perplexity_batch_size: 8
   compute_perplexity_on_sanity: False
   gen_ppl_eval_model_name_or_path: gpt2-large  # gpt2-large, meta-llama/Llama-2-7b-hf
@@ -101,7 +105,7 @@ hydra:
 
 checkpointing:
   # Use custom `save_dir` if, e.g., saving to S3 bucket, otherwise leave this parameter as is
-  save_dir: ${cwd:}/db
+  save_dir: ${cwd:}
   # Note: `checkpoints` path should correspond to `checkpoint_every_n_steps.dirpath`
   resume_from_ckpt: true
   resume_ckpt_path: ${.save_dir}/checkpoints/last.ckpt

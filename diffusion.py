@@ -91,8 +91,16 @@ class Diffusion(L.LightningModule):
       self.mask_index = self.tokenizer.mask_token_id
     self.parameterization = self.config.parameterization
     if self.config.backbone == 'dit':
-      self.backbone = models.dit.DIT(
-        self.config, vocab_size=self.vocab_size)
+      is_local = os.path.exists(config.eval.checkpoint_path)
+      if config.eval.checkpoint_path and not is_local: # If we load from HF (remote)
+        print(f'Loading checkpoint from {config.eval.checkpoint_path}')
+        self.backbone = models.dit.DIT.from_pretrained(
+          config.eval.checkpoint_path,
+          config=config,
+          vocab_size=self.vocab_size)
+      else:
+        self.backbone = models.dit.DIT(
+          self.config, vocab_size=self.vocab_size)
     elif self.config.backbone == 'dimamba':
       self.backbone = models.dimamba.DiMamba(
         self.config,
