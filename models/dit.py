@@ -6,9 +6,10 @@ import flash_attn.layers.rotary
 import huggingface_hub
 import omegaconf
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
+from torch import nn
+
 
 # Flags required to enable jit fusion kernels
 torch._C._jit_set_profiling_mode(False)
@@ -17,7 +18,7 @@ torch._C._jit_override_can_fuse_on_cpu(True)
 torch._C._jit_override_can_fuse_on_gpu(True)
 
 
-def bias_dropout_add_scale(
+def bias_dropout_add_scale(  # noqa: PLR0913
     x: torch.Tensor,
     bias: typing.Optional[torch.Tensor],
     scale: torch.Tensor,
@@ -116,7 +117,7 @@ def apply_rotary_pos_emb(qkv, cos, sin):
 
 
 # function overload
-def modulate(x, shift, scale):
+def modulate(x, shift, scale):  # noqa: F811
   return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
 
 
@@ -191,20 +192,37 @@ class TimestepEmbedder(nn.Module):
 
 class LabelEmbedder(nn.Module):
   """Embeds class labels into vector representations.
-  
   Also handles label dropout for classifier-free guidance.
   """
-  def __init__(self, num_classes, cond_size):
+  # https://github.com/facebookresearch/DiT/blob/main/models.py
+  def __init__(self, num_classes, cond_size, dropout_prob, zero_null=True):
     super().__init__()
     self.embedding_table = nn.Embedding(num_classes + 1, cond_size)
+    #padding_idx=num_classes)
     self.num_classes = num_classes
+    self.dropout_prob = dropout_prob
 
-    # TODO think of initializing with 0.02 std deviation like in original DiT paper
+    # Init
+    nn.init.normal_(self.embedding_table.weight, std=0.02)
+
+    # Zero out the null class embedding
+    # The padding_idx makes it so that the last embedding is always zero
+    # (no gradient update)
+    if zero_null:
+      nn.init.constant_(self.embedding_table.weight[-1], 0)
+
+  def _token_drop(self, labels):
+    """Randomly drop class labels."""
+    if self.training and self.dropout_prob > 0:
+      mask = torch.rand_like(labels.float()) > self.dropout_prob
+      labels[mask] = self.num_classes # map to null class
+    return labels
 
   def forward(self, labels):
+    labels = self._token_drop(labels)
     embeddings = self.embedding_table(labels)
     return embeddings
-    
+
 
 #################################################################################
 #                                 Core Model                                    #
@@ -271,7 +289,7 @@ class DDiTBlock(nn.Module):
       cu_seqlens = seqlens.cumsum(-1)
     x = flash_attn.flash_attn_interface.flash_attn_varlen_qkvpacked_func(
       qkv, cu_seqlens, seq_len, 0., causal=False)
-    
+
     x = rearrange(x, '(b s) h d -> b s (h d)', b=batch_size)
 
     x = bias_dropout_scale_fn(self.attn_out(x),
@@ -324,7 +342,7 @@ class DDitFinalLayer(nn.Module):
 class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
   def __init__(self, config, vocab_size: int):
     super().__init__()
-    if type(config) == dict:
+    if isinstance(config, dict):
       config = omegaconf.OmegaConf.create(config)
 
     self.config = config
@@ -333,6 +351,20 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
     self.vocab_embed = EmbeddingLayer(config.model.hidden_size,
                                       vocab_size)
     self.sigma_map = TimestepEmbedder(config.model.cond_dim)
+
+    # Does nothing if num_classes and/or label_dropout are not defined
+    if hasattr(config.model, 'num_classes') and hasattr(config.model, 'label_dropout'):
+      assert config.model.num_classes == config.data.num_classes, "num_classes must match the dataset"
+      n_classes = config.model.num_classes
+      dropout_p = config.model.label_dropout
+    else:
+      n_classes = 0
+      dropout_p = 0.0
+    # WARNING: Always make sure that the number of classes of the dataset is correct
+    print(f"Loaded/init with n_classes: {n_classes}, dropout_p: {dropout_p}")
+
+    self.label_embed = LabelEmbedder(n_classes, config.model.cond_dim, dropout_p)
+
     self.rotary_emb = Rotary(
       config.model.hidden_size // config.model.n_heads)
 
@@ -356,9 +388,13 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
     else:
       return  bias_dropout_add_scale_fused_inference
 
-  def forward(self, indices, sigma):
+  def forward(self, indices, sigma, labels=None):
     x = self.vocab_embed(indices)
-    c = F.silu(self.sigma_map(sigma))
+
+    if labels is None:
+      c = F.silu(self.sigma_map(sigma))
+    else:
+      c = F.silu(self.sigma_map(sigma) + self.label_embed(labels))
 
     rotary_cos_sin = self.rotary_emb(x)
 
@@ -368,3 +404,13 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
       x = self.output_layer(x, c)
 
     return x
+
+  def forward_with_cfg(self, indices, sigma, labels, cfg_scale):
+    indices = torch.cat([indices, indices], dim=0)
+    sigma = torch.cat([sigma, sigma], dim=0)
+    labels_null = torch.full_like(labels, self.label_embed.num_classes)
+    labels = torch.cat([labels, labels_null], dim=0)
+
+    out = self.forward(indices, sigma, labels)
+    cond, uncond = torch.split(out, out.size(0) // 2, dim=0)
+    return uncond + cfg_scale * (cond - uncond)

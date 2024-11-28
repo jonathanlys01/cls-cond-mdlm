@@ -117,7 +117,7 @@ class Sampler:
 
   def _sampling_noise(self):
     pass
-  
+
   def _hard_sample(self, logits):
     pass
 

@@ -1,0 +1,20 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.cache/
+
+# Virtual environments
+.venv
+
+# Project-specific files
+outputs/
+
+# Symlink to db
+db
+
+# Slurm logs
+slurm-logs

@@ -1,0 +1,9 @@
+train: arxiv-abs
+valid: arxiv-abs
+tokenizer_name_or_path: gpt2
+cache_dir: '~/cls-cond-mdlm/db/arxiv-abs'
+wrap: True
+streaming: False
+
+num_classes: 20
+label_dropout: 0.1

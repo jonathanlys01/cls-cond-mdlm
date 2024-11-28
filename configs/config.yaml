@@ -1,11 +1,11 @@
 defaults:
   - _self_
   - /callbacks: [checkpoint_every_n_steps, checkpoint_monitor, learning_rate_monitor]
-  - /data: openwebtext
+  - /data: arxiv-abs
   - /model: small
   - /strategy: ddp
   - /noise: loglinear
-  - /lr_scheduler: constant_warmup
+  - /lr_scheduler: cosine_decay_warmup
 
 mode: train  # train / ppl_eval / sample_eval
 diffusion: absorbing_state
@@ -18,7 +18,7 @@ subs_masking: False
 seed: 1
 
 loader:
-  global_batch_size: 512
+  global_batch_size: 8
   eval_global_batch_size: ${.global_batch_size}
   # Note: batch_size and eval_batch_size are **per machine**
   batch_size: ${div_up:${.global_batch_size}, ${eval:${trainer.devices} * ${trainer.num_nodes}}}
@@ -36,6 +36,20 @@ sampling:
   semi_ar: False
   stride_length: 1
   num_strides: 1
+  authorized_labels:
+  - 0
+  - 1
+  cfg_scale: 0.1
+
+sweep:
+  target: "cfg" # cfg, timesteps
+  min: 0.01 # 1 for time, 0.1 for cfg_scale
+  max: 1.2 # 10_000 for time, 8 for cfg_scale 
+  num_samples: 100
+
+
+
+
 
 training:
   ema: 0.9999
@@ -47,7 +61,7 @@ training:
 eval:
   checkpoint_path: ''  # Used to evaluate a checkpoint after training.
   disable_ema: False
-  compute_generative_perplexity: False
+  compute_generative_perplexity: True
   perplexity_batch_size: 8
   compute_perplexity_on_sanity: False
   gen_ppl_eval_model_name_or_path: gpt2-large  # gpt2-large, meta-llama/Llama-2-7b-hf
@@ -69,15 +83,15 @@ trainer:
   gradient_clip_val: 1.0
   precision: 'bf16'
   num_sanity_val_steps: 2
-  max_steps: 1_000_000
+  max_steps: 50_000
   log_every_n_steps: 10
   limit_train_batches: 1.0   # train on full dataset, can be used to toggle quick run
   limit_val_batches: 1.0     # validate on full dataset, can be used to toggle quick run
-  val_check_interval: 10000
+  val_check_interval: 1_000
 
 wandb:
   project: text-diffusion
-  notes: Mulan for text
+  notes: Class conditional implementation of MDLM
   group: null
   job_type: null
   name: null
@@ -89,7 +103,7 @@ wandb:
 
 hydra:
   run:
-    dir: ./outputs/${data.train}/${now:%Y.%m.%d}/${now:%H%M%S}
+    dir: ./db/${data.train}/${now:%Y.%m.%d}/${now:%H%M%S}
   job:
     chdir: true
 

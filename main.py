@@ -1,16 +1,23 @@
 import os
+import random
+import time
 
 import fsspec
 import hydra
 import lightning as L
+import numpy as np
 import omegaconf
+import pandas as pd
 import rich.syntax
 import rich.tree
 import torch
+from tqdm import tqdm
 
 import dataloader
 import diffusion
 import utils
+from cls_cond.classification import SentimentClassifier
+
 
 omegaconf.OmegaConf.register_new_resolver(
   'cwd', os.getcwd)
@@ -26,7 +33,7 @@ def _load_from_checkpoint(config, tokenizer):
   if 'hf' in config.backbone:
     return diffusion.Diffusion(
       config, tokenizer=tokenizer).to('cuda')
-  
+
   return diffusion.Diffusion.load_from_checkpoint(
     config.eval.checkpoint_path,
     tokenizer=tokenizer,
@@ -39,7 +46,7 @@ def _print_config(
   resolve: bool = True,
   save_cfg: bool = True) -> None:
   """Prints content of DictConfig using Rich library and its tree structure.
-  
+
   Args:
     config (DictConfig): Configuration composed by Hydra.
     resolve (bool): Whether to resolve reference fields of DictConfig.
@@ -84,10 +91,26 @@ def _print_batch(train_ds, valid_ds, tokenizer, k=64):
 
 
 def generate_samples(config, logger, tokenizer):
+  """
+  Generate text samples using a pre-trained model based on the provided configuration.
+  Args:
+    config (object): Configuration object containing sampling parameters and other settings.
+    logger (object): Logger object for logging information.
+    tokenizer (object): Tokenizer object for encoding and decoding text.
+  Returns:
+    tuple: A tuple containing:
+      - text_samples (list): List of generated text samples.
+      - all_texts (list): List of all generated text samples across batches.
+      - all_labels (list): List of labels corresponding to the generated text samples.
+  """
+
+  authorized_labels = config.sampling.authorized_labels
   logger.info('Generating samples.')
   model = _load_from_checkpoint(config=config,
                                 tokenizer=tokenizer)
   model.gen_ppl_metric.reset()
+  all_texts = []
+  all_labels = []
   if config.eval.disable_ema:
     logger.info('Disabling EMA.')
     model.ema = None
@@ -106,15 +129,172 @@ def generate_samples(config, logger, tokenizer):
       # and diffusion.compute_generative_perplexity() discards
       # any text after the first EOS token.
     else:
+      labels = [random.choice(authorized_labels) for _ in range(config.loader.eval_batch_size)]
+      labels = torch.tensor(labels).to('cuda')
       samples = model.restore_model_and_sample(
-        num_steps=config.sampling.steps)
+        num_steps=config.sampling.steps,
+        labels=labels)
       text_samples = model.tokenizer.batch_decode(samples)
       model.compute_generative_perplexity(text_samples)
+    all_texts.extend(text_samples)
+    all_labels.extend(labels.tolist())
   print('Text samples:', text_samples)
   if not config.sampling.semi_ar:
     print('Generative perplexity:',
           model.gen_ppl_metric.compute())
-  return text_samples
+  return all_texts, all_labels
+
+
+def _sweep_timesteps(config, logger, tokenizer):
+  logger.info('Sweeping timesteps.')
+  model = _load_from_checkpoint(config=config,
+                                tokenizer=tokenizer)
+
+  ds_timestep = []
+  ds_time = []
+  ds_ppl = []
+
+  assert config.sampling.semi_ar is False, 'Semi-AR not supported for sweep.'
+  if config.eval.disable_ema:
+    logger.info('Disabling EMA.')
+    model.ema = None
+
+  log_min_timesteps = np.log2(config.sweep.min)
+  log_max_timesteps = np.log2(config.sweep.max)
+
+  pbar = tqdm(
+    np.linspace(
+      log_min_timesteps, log_max_timesteps, config.sweep.num_samples),
+    total=config.sweep.num_samples,
+    desc='Sweeping timesteps')
+
+  for log_timesteps in pbar:
+
+    model.gen_ppl_metric.reset()
+
+    timesteps = int(2 ** log_timesteps)
+    total_time = 0
+
+
+    for label in config.sampling.authorized_labels:
+
+      start = time.time()
+
+      labels = [label for _ in range(config.loader.eval_batch_size)]
+      labels = torch.tensor(labels).to('cuda')
+
+      samples = model.restore_model_and_sample(
+        num_steps=timesteps,
+        labels=labels)
+
+      end = time.time()
+      total_time += (end - start)
+      text_samples = model.tokenizer.batch_decode(samples)
+      model.compute_generative_perplexity(text_samples)
+
+    ppl = model.gen_ppl_metric.compute().item()
+    pbar.set_postfix({'timesteps': timesteps, 'ppl': ppl, 'time': total_time})
+
+    ds_time.append(total_time)
+    ds_timestep.append(timesteps)
+    ds_ppl.append(ppl)
+
+  sweep_timesteps = pd.DataFrame({
+    'timesteps': ds_timestep,
+    'time': ds_time,
+    'ppl': ds_ppl
+  })
+
+  sweep_timesteps.to_csv(
+    f'{config.checkpointing.save_dir}/sweep_timesteps.csv',
+    index=False)
+
+
+def _sweep_cfg(config, logger, tokenizer):
+  logger.info('Sweeping Classifier-free Guidance.')
+  model = _load_from_checkpoint(config=config,
+                                tokenizer=tokenizer)
+
+  sentiment_classifier = SentimentClassifier().to('cuda')
+
+  ds_cfg = []
+  ds_time = []
+  ds_ppl = []
+  ds_acc = []
+
+  assert config.sampling.semi_ar is False, 'Semi-AR not supported for sweep.'
+  if config.eval.disable_ema:
+    logger.info('Disabling EMA.')
+    model.ema = None
+
+  log_min_cfg = np.log2(config.sweep.min)
+  log_max_cfg = np.log2(config.sweep.max)
+
+  pbar = tqdm(
+    np.linspace(
+      log_min_cfg, log_max_cfg, config.sweep.num_samples),
+    total=config.sweep.num_samples,
+    desc='Sweeping Classifier-free Guidance')
+
+  for log_cfg in pbar:
+    cfg = 2 ** log_cfg
+    # OmegaConf only supports primitive types
+    # not numpy float64
+    model.config.sampling.cfg_scale = float(cfg)
+    model.gen_ppl_metric.reset()
+
+    all_texts = []
+    all_labels = []
+
+    total_time = 0
+
+    # inference
+    for _ in range(config.sampling.num_sample_batches):
+      start = time.time()
+      labels = [random.choice(config.sampling.authorized_labels) for _ in range(config.loader.eval_batch_size)]
+      labels = torch.tensor(labels).to('cuda')
+      samples = model.restore_model_and_sample(
+        num_steps=config.sampling.steps,
+        labels=labels)
+      end = time.time()
+      total_time += (end - start)
+      text_samples = model.tokenizer.batch_decode(samples)
+      model.compute_generative_perplexity(text_samples)
+      all_texts.extend(text_samples)
+      all_labels.extend(labels.tolist())
+
+    # metrics
+    ppl = model.gen_ppl_metric.compute().item()
+
+    pred_labels = sentiment_classifier.predict(all_texts)
+    acc = sentiment_classifier.compute_accuracy(pred_labels, all_labels)
+
+    pbar.set_postfix({'cfg': cfg, 'ppl': ppl, 'time': total_time, 'acc': acc})
+
+    ds_cfg.append(cfg)
+    ds_time.append(total_time)
+    ds_ppl.append(ppl)
+    ds_acc.append(acc)
+
+  sweep_cfg = pd.DataFrame({
+    'cfg': ds_cfg,
+    'time': ds_time,
+    'ppl': ds_ppl,
+    'acc': ds_acc
+  })
+
+  sweep_cfg.to_csv(
+    f'{config.checkpointing.save_dir}/sweep_cfg.csv',
+    index=False)
+
+def _gen_acc_eval(config, logger, tokenizer):
+  logger.info("Evaluating generative accuracy.")
+  gen_texts, gt_labels = generate_samples(config, logger, tokenizer)
+  classifier = SentimentClassifier()
+  pred_labels = classifier.predict(gen_texts)
+  acc = classifier.compute_accuracy(pred_labels, gt_labels)
+  logger.info(f"Generative accuracy: {acc}")
+  return acc
 
 def _ppl_eval(config, logger, tokenizer):
   logger.info('Starting Zero Shot Eval.')
@@ -189,14 +369,27 @@ def main(config):
   """Main entry point for training."""
   L.seed_everything(config.seed)
   _print_config(config, resolve=True, save_cfg=True)
-  
+
   logger = utils.get_logger(__name__)
   tokenizer = dataloader.get_tokenizer(config)
 
   if config.mode == 'sample_eval':
-    generate_samples(config, logger, tokenizer)
+    gen_texts, _ = generate_samples(config, logger, tokenizer)
+    # write generated samples to file
+    with fsspec.open(
+      '{}/generated_samples.txt'.format(
+        config.checkpointing.save_dir), 'w') as fp:
+      for text in gen_texts:
+        fp.write(text + '\n')
   elif config.mode == 'ppl_eval':
     _ppl_eval(config, logger, tokenizer)
+  elif config.mode == 'sweep':
+    fn = {"timesteps": _sweep_timesteps,
+          "cfg": _sweep_cfg}[config.sweep.target]
+    fn(config, logger, tokenizer)
+
+  elif config.mode == 'gen_acc_eval':
+    _gen_acc_eval(config, logger, tokenizer)
   else:
     _train(config, logger, tokenizer)
 

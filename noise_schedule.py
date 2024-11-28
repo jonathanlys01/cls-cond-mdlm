@@ -1,7 +1,8 @@
 import abc
 
 import torch
-import torch.nn as nn
+from torch import nn
+
 
 # Flags required to enable jit fusion kernels
 torch._C._jit_set_profiling_mode(False)
@@ -41,7 +42,7 @@ class Noise(abc.ABC, nn.Module):
   def forward(self, t):
     # Assume time goes from 0 to 1
     return self.total_noise(t), self.rate_noise(t)
-  
+
   @abc.abstractmethod
   def rate_noise(self, t):
     """
@@ -51,7 +52,7 @@ class Noise(abc.ABC, nn.Module):
 
   @abc.abstractmethod
   def total_noise(self, t):
-    """
+    r"""
     Total noise ie \int_0^t g(t) dt + g(0)
     """
     pass
