@@ -17,6 +17,7 @@ import torch
 import transformers
 
 import utils
+from cls_cond.amazon_rev import get_amazon_polarity
 from cls_cond.arxiv_abs import get_arxiv_abs
 from cls_cond.arxiv_cls import get_arxiv_cls_categories
 
@@ -307,6 +308,8 @@ def get_dataset(
     return get_arxiv_abs(mode=mode)
   elif dataset_name == 'arxiv-cls':
     return get_arxiv_cls_categories(mode=mode)
+  elif dataset_name == 'amazon-polarity':
+    return get_amazon_polarity(mode=mode)
 
   if wrap:
     filename = f'{dataset_name}_{mode}_bs{block_size}_wrapped.dat'

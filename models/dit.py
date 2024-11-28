@@ -18,7 +18,7 @@ torch._C._jit_override_can_fuse_on_cpu(True)
 torch._C._jit_override_can_fuse_on_gpu(True)
 
 
-def bias_dropout_add_scale(
+def bias_dropout_add_scale(  # noqa: PLR0913
     x: torch.Tensor,
     bias: typing.Optional[torch.Tensor],
     scale: torch.Tensor,
@@ -192,7 +192,6 @@ class TimestepEmbedder(nn.Module):
 
 class LabelEmbedder(nn.Module):
   """Embeds class labels into vector representations.
-  
   Also handles label dropout for classifier-free guidance.
   """
   # https://github.com/facebookresearch/DiT/blob/main/models.py

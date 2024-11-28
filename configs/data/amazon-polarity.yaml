@@ -1,0 +1,9 @@
+train: amazon-polarity
+valid: amazon-polarity
+tokenizer_name_or_path: gpt2
+cache_dir: '~/cls-cond-mdlm/db/amazon-polarity'
+wrap: True
+streaming: False
+
+num_classes: 2
+label_dropout: 0.25

@@ -4,6 +4,16 @@ from transformers import AutoTokenizer
 
 
 def chunked_tokenize(example, tokenizer: AutoTokenizer, max_len = None):
+    """
+    Tokenizes the input text in chunks to handle long sequences efficiently.
+    Args:
+        example (dict): A dictionary containing the input text with the key "text".
+        tokenizer (AutoTokenizer): An instance of a tokenizer from the Hugging Face library.
+        max_len (int, optional): The maximum length of each chunk. If None, uses the tokenizer's model_max_length.
+    Returns:
+        dict: The input dictionary with an additional key "input_ids" containing the tokenized input IDs.
+    """
+
     # Faster (chunked) tokenization
     if max_len is None:
         max_len = tokenizer.model_max_length

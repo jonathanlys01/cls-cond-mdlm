@@ -16,6 +16,7 @@ from tqdm import tqdm
 import dataloader
 import diffusion
 import utils
+from cls_cond.classification import SentimentClassifier
 
 
 omegaconf.OmegaConf.register_new_resolver(
@@ -90,11 +91,26 @@ def _print_batch(train_ds, valid_ds, tokenizer, k=64):
 
 
 def generate_samples(config, logger, tokenizer):
+  """
+  Generate text samples using a pre-trained model based on the provided configuration.
+  Args:
+    config (object): Configuration object containing sampling parameters and other settings.
+    logger (object): Logger object for logging information.
+    tokenizer (object): Tokenizer object for encoding and decoding text.
+  Returns:
+    tuple: A tuple containing:
+      - text_samples (list): List of generated text samples.
+      - all_texts (list): List of all generated text samples across batches.
+      - all_labels (list): List of labels corresponding to the generated text samples.
+  """
+
   authorized_labels = config.sampling.authorized_labels
   logger.info('Generating samples.')
   model = _load_from_checkpoint(config=config,
                                 tokenizer=tokenizer)
   model.gen_ppl_metric.reset()
+  all_texts = []
+  all_labels = []
   if config.eval.disable_ema:
     logger.info('Disabling EMA.')
     model.ema = None
@@ -120,11 +136,13 @@ def generate_samples(config, logger, tokenizer):
         labels=labels)
       text_samples = model.tokenizer.batch_decode(samples)
       model.compute_generative_perplexity(text_samples)
+    all_texts.extend(text_samples)
+    all_labels.extend(labels.tolist())
   print('Text samples:', text_samples)
   if not config.sampling.semi_ar:
     print('Generative perplexity:',
           model.gen_ppl_metric.compute())
-  return text_samples
+  return all_texts, all_labels
 
 
 def _sweep_timesteps(config, logger, tokenizer):
@@ -136,12 +154,13 @@ def _sweep_timesteps(config, logger, tokenizer):
   ds_time = []
   ds_ppl = []
 
+  assert config.sampling.semi_ar is False, 'Semi-AR not supported for sweep.'
   if config.eval.disable_ema:
     logger.info('Disabling EMA.')
     model.ema = None
 
-  log_min_timesteps = np.log2(config.sweep.min_timesteps)
-  log_max_timesteps = np.log2(config.sweep.max_timesteps)
+  log_min_timesteps = np.log2(config.sweep.min)
+  log_max_timesteps = np.log2(config.sweep.max)
 
   pbar = tqdm(
     np.linspace(
@@ -155,7 +174,6 @@ def _sweep_timesteps(config, logger, tokenizer):
 
     timesteps = int(2 ** log_timesteps)
     total_time = 0
-    assert config.sampling.semi_ar is False, 'Semi-AR not supported for sweep.'
 
 
     for label in config.sampling.authorized_labels:
@@ -191,6 +209,92 @@ def _sweep_timesteps(config, logger, tokenizer):
     f'{config.checkpointing.save_dir}/sweep_timesteps.csv',
     index=False)
 
+
+def _sweep_cfg(config, logger, tokenizer):
+  logger.info('Sweeping Classifier-free Guidance.')
+  model = _load_from_checkpoint(config=config,
+                                tokenizer=tokenizer)
+
+  sentiment_classifier = SentimentClassifier().to('cuda')
+
+  ds_cfg = []
+  ds_time = []
+  ds_ppl = []
+  ds_acc = []
+
+  assert config.sampling.semi_ar is False, 'Semi-AR not supported for sweep.'
+  if config.eval.disable_ema:
+    logger.info('Disabling EMA.')
+    model.ema = None
+
+  log_min_cfg = np.log2(config.sweep.min)
+  log_max_cfg = np.log2(config.sweep.max)
+
+  pbar = tqdm(
+    np.linspace(
+      log_min_cfg, log_max_cfg, config.sweep.num_samples),
+    total=config.sweep.num_samples,
+    desc='Sweeping Classifier-free Guidance')
+
+  for log_cfg in pbar:
+    cfg = 2 ** log_cfg
+    # OmegaConf only supports primitive types
+    # not numpy float64
+    model.config.sampling.cfg_scale = float(cfg)
+    model.gen_ppl_metric.reset()
+
+    all_texts = []
+    all_labels = []
+
+    total_time = 0
+
+    # inference
+    for _ in range(config.sampling.num_sample_batches):
+      start = time.time()
+      labels = [random.choice(config.sampling.authorized_labels) for _ in range(config.loader.eval_batch_size)]
+      labels = torch.tensor(labels).to('cuda')
+      samples = model.restore_model_and_sample(
+        num_steps=config.sampling.steps,
+        labels=labels)
+      end = time.time()
+      total_time += (end - start)
+      text_samples = model.tokenizer.batch_decode(samples)
+      model.compute_generative_perplexity(text_samples)
+      all_texts.extend(text_samples)
+      all_labels.extend(labels.tolist())
+
+    # metrics
+    ppl = model.gen_ppl_metric.compute().item()
+
+    pred_labels = sentiment_classifier.predict(all_texts)
+    acc = sentiment_classifier.compute_accuracy(pred_labels, all_labels)
+
+    pbar.set_postfix({'cfg': cfg, 'ppl': ppl, 'time': total_time, 'acc': acc})
+
+    ds_cfg.append(cfg)
+    ds_time.append(total_time)
+    ds_ppl.append(ppl)
+    ds_acc.append(acc)
+
+  sweep_cfg = pd.DataFrame({
+    'cfg': ds_cfg,
+    'time': ds_time,
+    'ppl': ds_ppl,
+    'acc': ds_acc
+  })
+
+  sweep_cfg.to_csv(
+    f'{config.checkpointing.save_dir}/sweep_cfg.csv',
+    index=False)
+
+def _gen_acc_eval(config, logger, tokenizer):
+  logger.info("Evaluating generative accuracy.")
+  gen_texts, gt_labels = generate_samples(config, logger, tokenizer)
+  classifier = SentimentClassifier()
+  pred_labels = classifier.predict(gen_texts)
+  acc = classifier.compute_accuracy(pred_labels, gt_labels)
+  logger.info(f"Generative accuracy: {acc}")
+  return acc
 
 def _ppl_eval(config, logger, tokenizer):
   logger.info('Starting Zero Shot Eval.')
@@ -270,7 +374,7 @@ def main(config):
   tokenizer = dataloader.get_tokenizer(config)
 
   if config.mode == 'sample_eval':
-    gen_texts = generate_samples(config, logger, tokenizer)
+    gen_texts, _ = generate_samples(config, logger, tokenizer)
     # write generated samples to file
     with fsspec.open(
       '{}/generated_samples.txt'.format(
@@ -279,8 +383,13 @@ def main(config):
         fp.write(text + '\n')
   elif config.mode == 'ppl_eval':
     _ppl_eval(config, logger, tokenizer)
-  elif config.mode == 'sweep_timesteps':
-    _sweep_timesteps(config, logger, tokenizer)
+  elif config.mode == 'sweep':
+    fn = {"timesteps": _sweep_timesteps,
+          "cfg": _sweep_cfg}[config.sweep.target]
+    fn(config, logger, tokenizer)
+
+  elif config.mode == 'gen_acc_eval':
+    _gen_acc_eval(config, logger, tokenizer)
   else:
     _train(config, logger, tokenizer)
 

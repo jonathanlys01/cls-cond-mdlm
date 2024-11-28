@@ -3,74 +3,55 @@ import os
 from functools import partial
 
 import pandas as pd
-from datasets import Dataset, concatenate_datasets, load_dataset
+from datasets import load_dataset
 from tqdm import tqdm
 from transformers import AutoTokenizer
 
-import dataloader
 from cls_cond.token_utils import chunked_tokenize
 
 
-DS_NAME = "ccdv/arxiv-classification"
-CACHE_DIR = os.path.expanduser("~/cls-cond-mdlm/db/arxiv-cls")
+DS_NAME = "fancyzhx/amazon_polarity"
+CACHE_DIR = os.path.expanduser("~/cls-cond-mdlm/db/amazon-polarity")
 
 
 CAT_COL = "label"
-ABS_COL = "text"
+TITLE_COL = "title"
+REVIEW_COL = "content"
+
 BLOCK_SIZE = 1024
 
-
 CAT_MAP = {
-    0: "math.AC",
-    1: "cs.CV",
-    2: "cs.AI",
-    3: "cs.SY",
-    4: "math.GR",
-    5: "cs.CE",
-    6: "cs.PL",
-    7: "cs.IT",
-    8: "cs.DS",
-    9: "cs.NE",
-    10: "math.ST",
+    0: "negative",
+    1: "positive",
 }
 
+def _merge(example):
 
-def preprocess(mode) -> int:
+    # Remove leading/trailing whitespaces
+    title = example[TITLE_COL].strip()
+    review = example[REVIEW_COL].strip()
+
+    # Add a period at the end if it's missing
+    if title and title[-1] not in [".", "!", "?"]:
+       title += "."
+    if review and review[-1] not in [".", "!", "?"]:
+        review += "."
+    # Merge the title and review
+    example["text"] = example[TITLE_COL] + " " + example[REVIEW_COL]
+    return example
+
+def preprocess(mode):
     """
-    Preprocess the dataset for training or evaluation.
-    This function performs the following steps:
-    1. Loads the dataset based on the specified mode (train, validation, or test).
-    2. Applies a detokenizer to the text data.
-    3. Tokenizes the text data using a specified tokenizer.
-    4. Groups the tokenized data by label and creates blocks of a specified size.
-    5. Pads the last block if necessary.
-    6. Saves the preprocessed data to a parquet file.
-    Args:
-        mode (str): The mode of the dataset to preprocess. Can be "train", "validation", or "test".
-    Returns:
-        int: The size of the output file in human-readable format.
+    mode in ["train", "validation"]
     """
+    assert mode in ["train", "validation"]
 
-    def arxiv_detokenizer(x):
-        x = dataloader.scientific_papers_detokenizer(x)
-        x = x.replace("\n", " ")
-        return x
-
-    if mode == "train":
+    if mode == "validation":
+        dataset = load_dataset(DS_NAME, cache_dir=CACHE_DIR)["test"]
+    else: # train
         dataset = load_dataset(DS_NAME, cache_dir=CACHE_DIR)["train"]
-    else:
-        ds_1 = load_dataset(DS_NAME, cache_dir=CACHE_DIR)["validation"]
-        ds_2 = load_dataset(DS_NAME, cache_dir=CACHE_DIR)["test"]
-        dataset = concatenate_datasets([ds_1, ds_2])
 
-    dataset = dataset.map(
-        lambda x: {
-            CAT_COL: x[CAT_COL],  # copy the category
-            "text": arxiv_detokenizer(x[ABS_COL]),
-        },
-        num_proc=8,
-        desc="Detokenizing text",
-    )
+    dataset = dataset.map(_merge, num_proc=8, remove_columns=[TITLE_COL, REVIEW_COL])
 
     tokenizer = AutoTokenizer.from_pretrained("gpt2")
     tokenizer.add_special_tokens({"pad_token": "[PAD]"})
@@ -80,7 +61,7 @@ def preprocess(mode) -> int:
     tokenized_ds = dataset.map(
         partial(chunked_tokenize,
                 tokenizer=tokenizer,
-                max_len=BLOCK_SIZE // 2
+                max_len=BLOCK_SIZE
                 ), num_proc=8, desc="Tokenizing text"
     ).to_pandas()
 
@@ -126,21 +107,12 @@ def preprocess(mode) -> int:
 
     ds = pd.DataFrame({"input_ids": final_input_ids, "label": final_labels})
 
-    output_path = os.path.join(CACHE_DIR, f"arxiv-cls-{mode}.parquet")
+    output_path = os.path.join(CACHE_DIR, f"amazon-polarity-{mode}.parquet")
     ds.to_parquet(output_path)
     return os.system("du -sh " + output_path)
 
-
-def get_arxiv_cls_categories(mode) -> Dataset:
-    """
-    Load the preprocessed arXiv dataset
-    Args:
-        mode: "train" or "validation"
-    Returns:
-        dataset: the preprocessed arXiv dataset
-    """
-
-    input_paths = {mode: os.path.join(CACHE_DIR, f"arxiv-cls-{mode}.parquet") for mode in ["train", "validation"]}
+def get_amazon_polarity(mode):
+    input_paths = {mode: os.path.join(CACHE_DIR, f"amazon-polarity-{mode}.parquet") for mode in ["train", "validation"]}
 
     all_exist = True
     for mode_ in ["train", "validation"]:
@@ -165,34 +137,23 @@ def get_arxiv_cls_categories(mode) -> Dataset:
 
     return dataset
 
-
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Preprocess the arXiv dataset for classification.")
+    parser = argparse.ArgumentParser(description="Preprocess the Amazon polarity dataset for classification.")
     parser.add_argument("--force", action="store_true", help="Force preprocessing even if the dataset already exists.")
     args = parser.parse_args()
 
-    template = "arxiv-cls-{mode}.parquet"
+    template = "amazon-polarity-{mode}.parquet"
     for mode in ["train", "validation"]:
-        if os.path.exists(os.path.join(CACHE_DIR, template.format(mode=mode))) and not args.force:
-            print(f"Dataset already preprocessed for {mode}.")
-        else:
-            print(f"Preprocessing {mode} dataset.")
+        if args.force or not os.path.exists(os.path.join(CACHE_DIR, template.format(mode=mode))):
             preprocess(mode)
+        else:
+            print(f"{mode} dataset already exists. Skipping.")
 
-    print("Preprocessing complete.")
+    train_ds = get_amazon_polarity("train")
+
+    sample = train_ds[0]
 
     tokenizer = AutoTokenizer.from_pretrained("gpt2")
 
-    print("Train dataset")
-    train_ds = get_arxiv_cls_categories("train")
-    print(len(train_ds))
-    ids = train_ds[0]["input_ids"]
-    print(len(ids))
-    print(tokenizer.decode(ids))
-
-    print("Validation dataset")
-    valid_ds = get_arxiv_cls_categories("validation")
-    print(len(valid_ds))
-    ids = valid_ds[0]["input_ids"]
-    print(len(ids))
-    print(tokenizer.decode(ids))
+    print(tokenizer.decode(sample["input_ids"]))
+    print(CAT_MAP[sample["label"].item()]) # tensor to int
