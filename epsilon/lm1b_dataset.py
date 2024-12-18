@@ -8,6 +8,7 @@ import datasets
 import numpy as np
 import torch
 from transformers import AutoTokenizer
+from huggingface_hub import hf_hub_url
 
 
 ETA = 0.2
@@ -185,7 +186,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--cache_dir", type=str)
     parser.add_argument("--mode", type=str, default="train")
+    parser.add_argument("--download", action="store_true")
     args = parser.parse_args()
 
-    dataset = get_epsilon_lm1b(args.mode, args.cache_dir)
-    print(dataset)
+    if args.download:
+        datasets.load_dataset("lm1b", cache_dir=args.cache_dir)
+        print("Downloaded LM1B dataset to", args.cache_dir)
+    else:
+        dataset = get_epsilon_lm1b(args.mode, args.cache_dir)
+        print(dataset)
