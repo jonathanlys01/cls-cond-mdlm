@@ -11,3 +11,5 @@ tie_word_embeddings: False
 # Class conditional implementation of MDLM
 label_dropout: 0.1
 num_classes: 20 # tied to arxiv dataset
+conditional: True
+cond_method: "label" # label-based conditioning

@@ -25,20 +25,21 @@ CAT_MAP = {
     1: "positive",
 }
 
-def _merge(example):
 
+def _merge(example):
     # Remove leading/trailing whitespaces
     title = example[TITLE_COL].strip()
     review = example[REVIEW_COL].strip()
 
     # Add a period at the end if it's missing
     if title and title[-1] not in [".", "!", "?"]:
-       title += "."
+        title += "."
     if review and review[-1] not in [".", "!", "?"]:
         review += "."
     # Merge the title and review
     example["text"] = example[TITLE_COL] + " " + example[REVIEW_COL]
     return example
+
 
 def preprocess(mode):
     """
@@ -48,7 +49,7 @@ def preprocess(mode):
 
     if mode == "validation":
         dataset = load_dataset(DS_NAME, cache_dir=CACHE_DIR)["test"]
-    else: # train
+    else:  # train
         dataset = load_dataset(DS_NAME, cache_dir=CACHE_DIR)["train"]
 
     dataset = dataset.map(_merge, num_proc=8, remove_columns=[TITLE_COL, REVIEW_COL])
@@ -59,10 +60,7 @@ def preprocess(mode):
     tokenizer.truncation_side = "right"
 
     tokenized_ds = dataset.map(
-        partial(chunked_tokenize,
-                tokenizer=tokenizer,
-                max_len=BLOCK_SIZE
-                ), num_proc=8, desc="Tokenizing text"
+        partial(chunked_tokenize, tokenizer=tokenizer, max_len=BLOCK_SIZE), num_proc=8, desc="Tokenizing text"
     ).to_pandas()
 
     print(dataset.cleanup_cache_files())
@@ -98,18 +96,18 @@ def preprocess(mode):
         current[label].extend(text)
 
     # Pad the last block
-    for label in current:
-        if current[label]:
-            to_pad = new_block_size - len(current[label])
-            current[label].extend([tokenizer.pad_token_id] * to_pad)
-            final_input_ids.append([BOS] + current[label] + [EOS])
-            final_labels.append(label)
+    for val, label in current.items():
+        to_pad = new_block_size - len(val)
+        current[label].extend([tokenizer.pad_token_id] * to_pad)
+        final_input_ids.append([BOS] + current[label] + [EOS])
+        final_labels.append(label)
 
     ds = pd.DataFrame({"input_ids": final_input_ids, "label": final_labels})
 
     output_path = os.path.join(CACHE_DIR, f"amazon-polarity-{mode}.parquet")
     ds.to_parquet(output_path)
     return os.system("du -sh " + output_path)
+
 
 def get_amazon_polarity(mode):
     input_paths = {mode: os.path.join(CACHE_DIR, f"amazon-polarity-{mode}.parquet") for mode in ["train", "validation"]}
@@ -137,6 +135,7 @@ def get_amazon_polarity(mode):
 
     return dataset
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Preprocess the Amazon polarity dataset for classification.")
     parser.add_argument("--force", action="store_true", help="Force preprocessing even if the dataset already exists.")
@@ -156,4 +155,4 @@ if __name__ == "__main__":
     tokenizer = AutoTokenizer.from_pretrained("gpt2")
 
     print(tokenizer.decode(sample["input_ids"]))
-    print(CAT_MAP[sample["label"].item()]) # tensor to int
+    print(CAT_MAP[sample["label"].item()])  # tensor to int

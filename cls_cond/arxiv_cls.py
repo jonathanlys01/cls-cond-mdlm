@@ -78,10 +78,7 @@ def preprocess(mode) -> int:
     tokenizer.truncation_side = "right"
 
     tokenized_ds = dataset.map(
-        partial(chunked_tokenize,
-                tokenizer=tokenizer,
-                max_len=BLOCK_SIZE // 2
-                ), num_proc=8, desc="Tokenizing text"
+        partial(chunked_tokenize, tokenizer=tokenizer, max_len=BLOCK_SIZE // 2), num_proc=8, desc="Tokenizing text"
     ).to_pandas()
 
     print(dataset.cleanup_cache_files())
@@ -117,12 +114,11 @@ def preprocess(mode) -> int:
         current[label].extend(text)
 
     # Pad the last block
-    for label in current:
-        if current[label]:
-            to_pad = new_block_size - len(current[label])
-            current[label].extend([tokenizer.pad_token_id] * to_pad)
-            final_input_ids.append([BOS] + current[label] + [EOS])
-            final_labels.append(label)
+    for val, label in current.items():
+        to_pad = new_block_size - len(val)
+        current[label].extend([tokenizer.pad_token_id] * to_pad)
+        final_input_ids.append([BOS] + current[label] + [EOS])
+        final_labels.append(label)
 
     ds = pd.DataFrame({"input_ids": final_input_ids, "label": final_labels})
 

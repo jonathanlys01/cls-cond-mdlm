@@ -11,3 +11,5 @@ tie_word_embeddings: False
 # Class conditional implementation of MDLM
 label_dropout: 0.25 # increased for better guidance
 num_classes: 2 # tied to the Amazon polarity dataset (fancyzhx/amazon_polarity)
+conditional: True
+cond_method: "label" # label-based conditioning

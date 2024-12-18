@@ -3,7 +3,7 @@ import time
 from transformers import AutoTokenizer
 
 
-def chunked_tokenize(example, tokenizer: AutoTokenizer, max_len = None):
+def chunked_tokenize(example, tokenizer: AutoTokenizer, max_len=None):
     """
     Tokenizes the input text in chunks to handle long sequences efficiently.
     Args:
@@ -20,11 +20,12 @@ def chunked_tokenize(example, tokenizer: AutoTokenizer, max_len = None):
     text_ = example["text"]
     assert isinstance(text_, str), "Input must be a string"
     # batch encode the text
-    texts = [text_[i : i + max_len] for i in range(0, len(text_), max_len)] # size in chars < size in tokens
+    texts = [text_[i : i + max_len] for i in range(0, len(text_), max_len)]  # size in chars < size in tokens
     input_ids = tokenizer(texts, add_special_tokens=False)["input_ids"]
     # flatten the list
     example["input_ids"] = [x for sublist in input_ids for x in sublist]
     return example
+
 
 def test_compare():
     tokenizer = AutoTokenizer.from_pretrained("gpt2")
@@ -51,9 +52,5 @@ def test_compare():
     # this should be True
 
 
-
 if __name__ == "__main__":
     test_compare()
-
-
-

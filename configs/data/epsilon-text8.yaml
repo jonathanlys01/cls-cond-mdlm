@@ -1,0 +1,6 @@
+train: epsilon-text8
+valid: epsilon-text8
+tokenizer_name_or_path: text8
+cache_dir: ~/cls-cond-mdlm/epsilon/data/text8
+wrap: True
+streaming: False

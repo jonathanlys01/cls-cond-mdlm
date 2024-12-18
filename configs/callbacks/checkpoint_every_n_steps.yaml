@@ -1,9 +1,9 @@
 checkpoint_every_n_steps:
   _target_: lightning.pytorch.callbacks.ModelCheckpoint
-  save_top_k: 10 # save top 10 models based on monitor
+  save_top_k: 5 # save top 5 models based on monitor
   save_last: True # save model as ${save_dir}/checkpoints/last.ckpt
   dirpath: ${checkpointing.save_dir}/checkpoints
   verbose: True
   auto_insert_metric_name: False
-  every_n_train_steps: 1_000
+  every_n_train_steps: 20_000
   monitor: val/gen_ppl

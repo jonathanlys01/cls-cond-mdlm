@@ -20,10 +20,7 @@ LABELS = {
     2: "positive",
 }
 
-GEN_LABELS = {
-    0: "negative",
-    1: "positive"
-}
+GEN_LABELS = {0: "negative", 1: "positive"}
 
 MODEL = "cardiffnlp/twitter-roberta-base-sentiment-latest"
 CACHE_DIR = os.path.expanduser("~/cls-cond-mdlm/db/modules")
@@ -35,19 +32,18 @@ BATCH_SIZE = 16
 
 PUNC = re.compile(r"[.?!]+")
 QUOTES_OR_NEWLINE = re.compile(r"[\"\n]")
-SPACES = re.compile(r"\s+") # replace arbitrary number of spaces with a single space
+SPACES = re.compile(r"\s+")  # replace arbitrary number of spaces with a single space
 
 
-
-def split(text:str)->list[str]:
+def split(text: str) -> list[str]:
     def _preprocess(text: str) -> str:
         text = text.strip()
-        text = QUOTES_OR_NEWLINE.sub("", text) # remove quotes and newlines
-        text = SPACES.sub(" ", text) # replace arbitrary number of spaces with a single space
+        text = QUOTES_OR_NEWLINE.sub("", text)  # remove quotes and newlines
+        text = SPACES.sub(" ", text)  # replace arbitrary number of spaces with a single space
         return text
 
     beginings = re.split(PUNC, text)
-    puncs = re.findall(PUNC, text) + [""] # match length of beginings
+    puncs = re.findall(PUNC, text) + [""]  # match length of beginings
     parts = [begining + punc for begining, punc in zip(beginings, puncs)]
     parts = [_preprocess(part) for part in parts]
     # Remove leading/trailing whitespaces and empty strings
@@ -55,12 +51,13 @@ def split(text:str)->list[str]:
     return parts
 
 
-def infer(texts: list[str],
-          tokenizer: AutoTokenizer,
-          model: RobertaForSequenceClassification,
-          aggregate="mean",
-          verbose=0,
-          ) -> list[int]:
+def infer(
+    texts: list[str],
+    tokenizer: AutoTokenizer,
+    model: RobertaForSequenceClassification,
+    aggregate="mean",
+    verbose=0,
+) -> list[int]:
     """
     Perform inference on a list of texts using a pre-trained RoBERTa model for sequence classification.
     Args:
@@ -77,15 +74,13 @@ def infer(texts: list[str],
         # rebatch at the beginning of each chunk
         logits = torch.zeros(len(chunked_texts), 3)
         for i in range(0, len(chunked_texts), BATCH_SIZE):
-            batch = chunked_texts[i:i+BATCH_SIZE]
-            inputs = tokenizer(batch,
-                               padding=True,
-                               truncation=True,
-                               return_tensors="pt",
-                               max_length=BLOCK_SIZE).to(model.device)
+            batch = chunked_texts[i : i + BATCH_SIZE]
+            inputs = tokenizer(batch, padding=True, truncation=True, return_tensors="pt", max_length=BLOCK_SIZE).to(
+                model.device
+            )
             with torch.no_grad():
                 outputs = model(**inputs)
-                logits[i:i+len(batch)] = outputs.logits
+                logits[i : i + len(batch)] = outputs.logits
         if verbose:
             print("Mean logits:")
             print(torch.mean(logits, dim=0))
@@ -114,10 +109,12 @@ def infer(texts: list[str],
 
     return preds
 
+
 def get_models(device) -> tuple[AutoTokenizer, RobertaForSequenceClassification]:
     tokenizer = AutoTokenizer.from_pretrained(MODEL, cache_dir=CACHE_DIR)
     model = RobertaForSequenceClassification.from_pretrained(MODEL, cache_dir=CACHE_DIR).to(device)
     return tokenizer, model
+
 
 def test_infer(texts):
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -127,6 +124,7 @@ def test_infer(texts):
     for text, pred in zip(texts, preds):
         print(f"Text: {text}")
         print(f"Predicted sentiment: {LABELS[pred]}")
+
 
 class SentimentClassifier:
     def __init__(self, aggregate="max_count", verbose=0):
@@ -146,11 +144,7 @@ class SentimentClassifier:
         else:
             agg = self.aggregate
 
-        preds = infer(texts,
-                      self.tokenizer,
-                      self.model,
-                      aggregate=agg,
-                      verbose=self.verbose)
+        preds = infer(texts, self.tokenizer, self.model, aggregate=agg, verbose=self.verbose)
 
         return preds
 
@@ -160,12 +154,12 @@ class SentimentClassifier:
     def compute_accuracy(self, gen_labels: list[int], gt_labels: list[int]) -> float:
         correct = 0
         for gen_label, gt_label in zip(gen_labels, gt_labels):
-            if LABELS[gen_label] == LABELS[gt_label]: # different labels for gen and gt
+            if LABELS[gen_label] == LABELS[gt_label]:  # different labels for gen and gt
                 correct += 1
         return correct / len(gt_labels)
 
-if __name__ == "__main__":
 
+if __name__ == "__main__":
     # dummy text
     test_text1 = """
     don\'t know it hear me, but I would rather listen to it and NECK IT OFF:BUT! Finally, this CD is undionable, it is still a pretty solid release and I reccomend it to anyone who doesn\'t have it.Talk about Marittis\' A powerful romp out of Fr. Harris. A cutsy girlfriend and Lady Joe develop real people and parents.Strong harmony and extraordinary voices together. A first CD that is an empowering place to start with.The Wotheest Music Ever! Anyone on and off can claim that there is no way of Irish folks on this Worship album!I found this CD to rank as the Greatest in 1953 bands!Taking an important, defined characters, deep/mudded downs, affairs and frivolous changes you never heard on an Irish CD.FURDER I bought the Sky Pe 1 and then put it in my car a lost place that was pouring out of my eyes...and I played it to get more and still in my car... Feeling so damn sad... and I love the song in my loop..Excellent CD Cranas have been the old voice benitort on vinyl for a very long time now...a total waste of money I bought a lather several years ago on the Rations and she finally sold out JR after she was versed on her musical business in 1981. I was thrilled with her collection of her records, received her first album in 1987 and obtained it out of a way as I stumbled upon to produce an Art. Power Age music album. Finding voices that we can visualize the use of these songs, are in a way to be able to burn the taste of the listener. On top heavy, audience lyrics, interesting songs, added vocals that take themselves and really get their way. Definitely a relax when listening to CD, I will then leave that statement of why this songive could be so rich to become micrusions to my own. Its awsome music to be time.Best Blend I have had no problem with joja, but I taste and drink all my tired prehear rams, and the bulk of regular blueberries usually add up to the expense of drinking curry from the YugToba oil. It has high levels of sugar and vanilla that we never used before. It\'s unavailable and there\'ll still be a few brands I can just add to this model and work everytime I reheat my own beans. When I drink coffee and I drink this I slow down the bottle of Starbucks. I just pour me and can brew several servings/ quantities of milk. Now it never got too cold and keeps coming out.The Secret Easy to setup. I couldn\'t get anyone to test it yet - no burning buildup with very low water. Needless to say, I buy this again now, and no problems at all!Great tunes this album is a traditional tripir rock style. I realized some of these marvelous songs was unavailable, the single, "Foun of Garden" - "I\'ve Got Back to Land," finally carries the aforementioned "Hym v Angeles" to the breathtaking harmonies. "Dream Lord\'s Hand" is one of the best Sepophonic riddle tracks. I personally think other songs on "Hot Bang" are their best, but overall lacking a rather interesting and heartfelt love song and "A**e".typical, but modern sound. I am somewhat nurtured by what this style of recording was, but the reviews yet have caught a faint risk just to get a little annoyed. I find this quelan recording to be scarier than I can with that. Just entering my head a great record label. Try doing so solo, they\'ll be old things and melodies so they sit up and feast and thoroughly grow up. I recommend the similar tome in particular, "love you wife" for relaxing, relaxing listen to production. I can\'t wait for more selections.Enchanting! I thank you for Fern Catherine\'s writings! She soothes all Maria\'s large Irish women. They have topped the pen of Aphosphorian with religious needs and the share of the "all small elephants" and I loved Welo\'s writings, but one of the suave choices ever for experince and I Mayin won\'t touch it to everyone.WOW!!! What a great CD, girl! I\'m so happy with the CD. Well done, and the reasons I love, love, loving them. That just don\'t have to be beat here! I can only guess that they just prove that she "saikes", that everyone\'s! They end up with freaky stuff with some contrived captions. I like, like Pans, want a great fun song, but make a cat to who you are. Other CDs don\'t buy"? "A+"!It\'s nice to own a collection of all these!!! Because I sat in the streets lots, taped on the road.You should have it. You should absolutely have a bow for this CD it would separate.'
