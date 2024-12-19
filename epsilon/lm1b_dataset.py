@@ -16,6 +16,8 @@ MASK = [1] * BLOCK_SIZE
 
 MAX_WORKERS = min(os.cpu_count() - 1, 16)
 
+SPLITS = ["train", "test"]
+
 
 def get_tokenizer():
     ret = AutoTokenizer.from_pretrained("gpt2")
@@ -71,7 +73,7 @@ def _group_texts(examples, block_size, bos, eos):
         _values.append([bos] + concatenated_examples[i : i + new_block_size] + [eos])
         _attn_masks.append(torch.ones(block_size, dtype=torch.long))
 
-    return {"input_ids": _values, "attention_mask": _attn_masks}
+    return {"input_ids": _values, "attention_mask": _attn_masks, "label": [0] * len(_values)}  # dummy label
 
 
 group_texts = functools.partial(
@@ -157,8 +159,38 @@ def _transform(examples):
     return {"input_ids": ids, "label": labels, "attention_mask": [MASK] * len(ids)}
 
 
-def get_epsilon_lm1b(mode, cache_dir=None):
-    dataset = datasets.load_dataset("lm1b", cache_dir=cache_dir)[mode]
+def download_lm1b(cache_dir):
+    dataset = datasets.load_dataset("lm1b", cache_dir=cache_dir)
+    preproc_dataset = dataset.map(
+        preproc,
+        desc="Preprocessing",
+        batched=True,
+        num_proc=MAX_WORKERS,
+        load_from_cache_file=True,
+    )
+
+    preproc_dataset = preproc_dataset.select_columns("input_ids")
+
+    chunked_dataset = preproc_dataset.map(
+        group_texts,
+        desc="Grouping texts",
+        batched=True,
+        num_proc=MAX_WORKERS,
+    )
+
+    chunked_dataset.save_to_disk(cache_dir)
+
+
+def get_epsilon_lm1b(mode, cache_dir):
+    if mode == "validation":
+        mode = "test"
+
+    assert mode in ["train", "test"]
+
+    if not all(os.path.exists(os.path.join(cache_dir, split)) for split in SPLITS):
+        download_lm1b(cache_dir)
+
+    dataset = datasets.load_from_disk(cache_dir)[mode]
 
     preproc_dataset = dataset.map(
         preproc,
@@ -179,6 +211,8 @@ def get_epsilon_lm1b(mode, cache_dir=None):
 
     # lazy non-deterministic transformation -> good for training
     final_dataset = chunked_dataset.with_transform(_transform)
+
+    final_dataset.set_format(type="torch", columns=["input_ids", "attention_mask", "label"])
 
     return final_dataset
 

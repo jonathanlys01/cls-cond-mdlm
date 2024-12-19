@@ -1,11 +1,10 @@
 #!/bin/bash
-#SBATCH --ntasks=1
-#SBATCH --partition=gpu_p2s
+
 #SBATCH --account=vaz@v100
-#SBATCH --constraint=v100-32g
+#SBATCH --constraint=v100-16g
 #SBATCH --nodes=1
-#SBATCH --ntasks=4
-#SBATCH --gres=gpu:4 
+#SBATCH --ntasks=2
+#SBATCH --gres=gpu:2
 #SBATCH --cpus-per-task=10
 #SBATCH --hint=nomultithread
 
@@ -13,8 +12,8 @@
 #SBATCH --job-name=epsilon-lm1b
 #SBATCH --output=slurm-logs/epsilon-lm1b.out
 #SBATCH --error=slurm-logs/epsilon-lm1b.err
-#SBATCH --time=05:00:00
-#SBATCH --qos=qos_gpu-t3
+#SBATCH --time=01:00:00
+#SBATCH --qos=qos_gpu-dev
 
 
 if ! [ -x "$(command -v sbatch)" ]; then
@@ -22,7 +21,8 @@ if ! [ -x "$(command -v sbatch)" ]; then
   PRE=""
 else
   echo "Job started at $(date)"
-  PRE="WANDB_MODE=offline srun"
+  WANDB_MODE=offline
+  PRE="srun"
   module purge
   conda deactivate
   source $WORK/projects/cls-cond-mdlm/.venv/bin/activate
@@ -39,4 +39,3 @@ $PRE python main.py \
   loader.global_batch_size=32 \
   loader.eval_batch_size=1 \
   wandb.name=small-epsilon-lm1b-test \
-  

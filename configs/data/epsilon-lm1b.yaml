@@ -3,3 +3,4 @@ valid: epsilon-lm1b
 tokenizer_name_or_path: gpt2
 cache_dir: ${scratch:}/data
 wrap: True
+streaming: True
