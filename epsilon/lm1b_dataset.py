@@ -192,25 +192,8 @@ def get_epsilon_lm1b(mode, cache_dir):
 
     dataset = datasets.load_from_disk(cache_dir)[mode]
 
-    preproc_dataset = dataset.map(
-        preproc,
-        desc="Preprocessing",
-        batched=True,
-        num_proc=MAX_WORKERS,
-        load_from_cache_file=True,
-    )
-
-    preproc_dataset = preproc_dataset.select_columns("input_ids")
-
-    chunked_dataset = preproc_dataset.map(
-        group_texts,
-        desc="Grouping texts",
-        batched=True,
-        num_proc=MAX_WORKERS,
-    )
-
     # lazy non-deterministic transformation -> good for training
-    final_dataset = chunked_dataset.with_transform(_transform)
+    final_dataset = dataset.with_transform(_transform)
 
     final_dataset.set_format(type="torch", columns=["input_ids", "attention_mask", "label"])
 
