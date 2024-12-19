@@ -156,7 +156,11 @@ def _transform(examples):
             ids.append(block["input_ids"])
             labels.append(block["label"])
 
-    return {"input_ids": ids, "label": labels, "attention_mask": [MASK] * len(ids)}
+    return {
+        "input_ids": torch.tensor(ids).long(),
+        "label": torch.tensor(labels).float(),
+        "attention_mask": torch.ones(len(ids), BLOCK_SIZE).long(),
+    }
 
 
 def download_lm1b(cache_dir):
@@ -188,14 +192,13 @@ def get_epsilon_lm1b(mode, cache_dir):
     assert mode in ["train", "test"]
 
     if not all(os.path.exists(os.path.join(cache_dir, split)) for split in SPLITS):
+        print("Downloading LM1B dataset to", cache_dir)
         download_lm1b(cache_dir)
 
     dataset = datasets.load_from_disk(cache_dir)[mode]
 
     # lazy non-deterministic transformation -> good for training
     final_dataset = dataset.with_transform(_transform)
-
-    final_dataset.set_format(type="torch", columns=["input_ids", "attention_mask", "label"])
 
     return final_dataset
 
@@ -208,7 +211,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.download:
-        datasets.load_dataset("lm1b", cache_dir=args.cache_dir)
+        download_lm1b(args.cache_dir)
         print("Downloaded LM1B dataset to", args.cache_dir)
     else:
         dataset = get_epsilon_lm1b(args.mode, args.cache_dir)
