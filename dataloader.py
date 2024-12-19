@@ -21,6 +21,7 @@ from cls_cond.amazon_rev import get_amazon_polarity
 from cls_cond.arxiv_abs import get_arxiv_abs
 from cls_cond.arxiv_cls import get_arxiv_cls_categories
 from epsilon.lm1b_dataset import get_epsilon_lm1b
+from epsilon.lm1b_dataset import get_tokenizer as get_epsilon_tokenizer
 from epsilon.text_dataset import load_text8_dataset
 
 
@@ -458,6 +459,9 @@ def get_tokenizer(config):
         tokenizer = Text8Tokenizer()
     elif config.data.tokenizer_name_or_path == "bert-base-uncased":
         tokenizer = transformers.BertTokenizer.from_pretrained("bert-base-uncased")
+    elif "eps" in config.data.tokenizer_name_or_path:
+        # Special tokenizer with epsilon tokens
+        tokenizer = get_epsilon_tokenizer()
     else:
         tokenizer = transformers.AutoTokenizer.from_pretrained(config.data.tokenizer_name_or_path)
 

@@ -250,7 +250,7 @@ class ProbaEmbedder(nn.Module):
         elif self.method == "erfinv":
             p_emb = torch.erfinv(2 * p - 1) * math.sqrt(2)
         elif self.method == "raw":
-            p_emb = p
+            p_emb = (p - 0.5) * 2  # scale to [-1, 1]
         elif self.method == "bucket":
             p_emb = (p * 10).round().long()  # round to nearest integer -> index
 

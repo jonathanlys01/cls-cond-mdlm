@@ -8,12 +8,13 @@ import datasets
 import numpy as np
 import torch
 from transformers import AutoTokenizer
-from huggingface_hub import hf_hub_url
 
 
 ETA = 0.2
-BLOCK_SIZE = 1_024
+BLOCK_SIZE = 256  # OG was 128, double with epsilon tokens
 MASK = [1] * BLOCK_SIZE
+
+MAX_WORKERS = min(os.cpu_count() - 1, 16)
 
 
 def get_tokenizer():
@@ -163,7 +164,7 @@ def get_epsilon_lm1b(mode, cache_dir=None):
         preproc,
         desc="Preprocessing",
         batched=True,
-        num_proc=os.cpu_count() - 1,
+        num_proc=MAX_WORKERS,
         load_from_cache_file=True,
     )
 
@@ -173,7 +174,7 @@ def get_epsilon_lm1b(mode, cache_dir=None):
         group_texts,
         desc="Grouping texts",
         batched=True,
-        num_proc=os.cpu_count() - 1,
+        num_proc=MAX_WORKERS,
     )
 
     # lazy non-deterministic transformation -> good for training
@@ -194,4 +195,9 @@ if __name__ == "__main__":
         print("Downloaded LM1B dataset to", args.cache_dir)
     else:
         dataset = get_epsilon_lm1b(args.mode, args.cache_dir)
+
         print(dataset)
+
+        for block in dataset:
+            print(block)
+            break

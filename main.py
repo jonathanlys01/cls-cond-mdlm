@@ -25,6 +25,10 @@ omegaconf.OmegaConf.register_new_resolver("device_count", torch.cuda.device_coun
 omegaconf.OmegaConf.register_new_resolver("eval", eval)
 omegaconf.OmegaConf.register_new_resolver("div_up", lambda x, y: (x + y - 1) // y)
 
+# SLURM environment variables
+omegaconf.OmegaConf.register_new_resolver("work", lambda: os.popen("echo $WORK").read().strip())
+omegaconf.OmegaConf.register_new_resolver("scratch", lambda: os.popen("echo $SCRATCH").read().strip())
+
 
 def _load_from_checkpoint(config, tokenizer):
     if "hf" in config.backbone:

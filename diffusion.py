@@ -69,7 +69,12 @@ class Diffusion(L.LightningModule):
         self.config = config
 
         self.tokenizer = tokenizer
-        self.vocab_size = self.tokenizer.vocab_size  # TODO: maybe len(tokenizer.vocab) is more accurate?
+        # Check if the tokenizer has the [EPS] token
+        self.has_eps_tokens = "[EPS]" in self.tokenizer.additional_special_tokens
+        if self.has_eps_tokens:
+            print("Tokenizer has [EPS] token")
+        # self.tokenizer.vocab_size is not reliable (does not account for special tokens)
+        self.vocab_size = len(self.tokenizer)
         self.sampler = self.config.sampling.predictor
         self.gen_ppl_eval_model_name_or_path = self.config.eval.gen_ppl_eval_model_name_or_path
         self.antithetic_sampling = self.config.training.antithetic_sampling
@@ -144,9 +149,6 @@ class Diffusion(L.LightningModule):
         self.fast_forward_epochs = None
         self.fast_forward_batches = None
         self._validate_configuration()
-
-        # Check if the tokenizer has the [EPS] token
-        self.has_eps_tokens = "[EPS]" in self.tokenizer.additional_special_tokens
 
     def _validate_configuration(self):
         assert not (self.change_of_variables and self.importance_sampling)
