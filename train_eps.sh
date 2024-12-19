@@ -1,7 +1,6 @@
 #!/bin/bash
 #SBATCH --ntasks=1
-#SBATCH --partition=
-#SBATCH --time=05:00:00
+#SBATCH --partition=gpu_p2s
 #SBATCH --account=vaz@v100
 #SBATCH --constraint=v100-32g
 #SBATCH --nodes=1
@@ -14,8 +13,8 @@
 #SBATCH --job-name=epsilon-lm1b
 #SBATCH --output=slurm-logs/epsilon-lm1b.out
 #SBATCH --error=slurm-logs/epsilon-lm1b.err
-#SBATCH --time=01:00:00
-#SBATCH --qos=qos_gpu-dev
+#SBATCH --time=05:00:00
+#SBATCH --qos=qos_gpu-t3
 
 
 if ! [ -x "$(command -v sbatch)" ]; then
