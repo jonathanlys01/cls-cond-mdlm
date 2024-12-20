@@ -21,7 +21,7 @@ SPLITS = ["train", "test"]
 
 def get_tokenizer():
     if os.environ.get("DSDIR"):
-        jz_path = os.path.join(os.environ.get("DSDIR"), "tokenizer")
+        jz_path = os.path.join(os.environ.get("DSDIR"), "HuggingFace_Models", "gpt2")
         print("Loading from local (JZ)")
         return AutoTokenizer.from_pretrained(jz_path)
     ret = AutoTokenizer.from_pretrained("gpt2")
