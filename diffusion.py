@@ -129,7 +129,11 @@ class Diffusion(L.LightningModule):
 
         # generative perplexity
         self.gen_ppl_metric = Perplexity()
-        self.eval_model_tokenizer = transformers.AutoTokenizer.from_pretrained(self.gen_ppl_eval_model_name_or_path)
+        self.eval_model_tokenizer = utils.possibly_load_from_local(
+            transformers.AutoTokenizer,
+            self.gen_ppl_eval_model_name_or_path,
+        )
+
         if self.eval_model_tokenizer.pad_token is None:
             self.eval_model_tokenizer.pad_token = self.eval_model_tokenizer.eos_token
             self.eval_model_tokenizer.pad_token_id = self.eval_model_tokenizer.eos_token_id
@@ -492,7 +496,10 @@ class Diffusion(L.LightningModule):
             pre-trained AR model (e.g., GPT2).
         """
         os.environ["TOKENIZERS_PARALLELISM"] = "false"
-        eval_model = transformers.AutoModelForCausalLM.from_pretrained(self.gen_ppl_eval_model_name_or_path).eval()
+        eval_model = utils.possibly_load_from_local(
+            transformers.AutoModelForCausalLM,
+            self.gen_ppl_eval_model_name_or_path,
+        ).eval()
         if max_length is None:
             max_length = self.config.model.length
         if "llama2" not in self.gen_ppl_eval_model_name_or_path:

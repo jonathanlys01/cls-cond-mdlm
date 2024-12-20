@@ -8,6 +8,7 @@ import datasets
 import numpy as np
 import torch
 from transformers import AutoTokenizer
+from utils import possibly_load_from_local
 
 
 ETA = 0.2
@@ -20,12 +21,7 @@ SPLITS = ["train", "test"]
 
 
 def get_tokenizer():
-    if os.environ.get("DSDIR"):
-        jz_path = os.path.join(os.environ.get("DSDIR"), "HuggingFace_Models", "gpt2")
-        print("Loading from local (JZ)")
-        ret = AutoTokenizer.from_pretrained(jz_path)
-    else:
-        ret = AutoTokenizer.from_pretrained("gpt2")
+    ret = possibly_load_from_local(AutoTokenizer, "gpt2")
     print("Adding", ret.add_special_tokens({"pad_token": "[PAD]", "additional_special_tokens": ["[EPS]"]}))
     return ret
 
