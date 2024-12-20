@@ -3,7 +3,7 @@
 #SBATCH --account=vaz@v100
 #SBATCH --constraint=v100-16g
 #SBATCH --nodes=1
-#SBATCH --ntasks=2
+#SBATCH --ntasks-per-node=2 # --ntasks=2 not PL compatible
 #SBATCH --gres=gpu:2
 #SBATCH --cpus-per-task=10
 #SBATCH --hint=nomultithread
