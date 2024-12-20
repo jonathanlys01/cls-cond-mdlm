@@ -159,7 +159,7 @@ def _transform(examples):
 
     return {
         "input_ids": torch.tensor(ids).long(),
-        "label": torch.tensor(labels).float(),
+        "label": torch.tensor(labels).reshape(-1, 1).float(),
         "attention_mask": torch.ones(len(ids), BLOCK_SIZE).long(),
     }
 
