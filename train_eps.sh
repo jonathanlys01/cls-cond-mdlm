@@ -24,6 +24,7 @@ else
   export WANDB_MODE=offline
   PRE="srun"
   module purge
+  module load arch/a100
   conda deactivate
   source $WORK/projects/cls-cond-mdlm/.venv/bin/activate
 fi
