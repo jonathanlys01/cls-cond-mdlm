@@ -1,7 +1,7 @@
 #!/bin/bash
 
-#SBATCH --account=vaz@v100
-#SBATCH --constraint=v100-16g
+#SBATCH --account=vaz@a100
+#SBATCH --constraint=a100
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=2 # --ntasks=2 not PL compatible
 #SBATCH --gres=gpu:2
@@ -13,7 +13,7 @@
 #SBATCH --output=slurm-logs/epsilon-lm1b.out
 #SBATCH --error=slurm-logs/epsilon-lm1b.err
 #SBATCH --time=01:00:00
-#SBATCH --qos=qos_gpu-dev
+#SBATCH --qos=qos_gpu_a100-dev
 
 
 if ! [ -x "$(command -v sbatch)" ]; then
