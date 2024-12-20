@@ -16,7 +16,7 @@ from timm.scheduler import CosineLRScheduler
 
 def possibly_load_from_local(cls, path_or_name):
     if os.environ.get("DSDIR"):
-        path = os.path.join(os.environ.get("DSDIR"), path_or_name)
+        path = os.path.join(os.environ.get("DSDIR"), "HuggingFace_Models", path_or_name)
         print(f"Loading from local (JZ): {path}")
         return cls.from_pretrained(path)
     return cls.from_pretrained(path_or_name)
