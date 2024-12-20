@@ -21,7 +21,7 @@ if ! [ -x "$(command -v sbatch)" ]; then
   PRE=""
 else
   echo "Job started at $(date)"
-  WANDB_MODE=offline
+  export WANDB_MODE=offline
   PRE="srun"
   module purge
   conda deactivate
