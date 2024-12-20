@@ -28,6 +28,7 @@ omegaconf.OmegaConf.register_new_resolver("div_up", lambda x, y: (x + y - 1) // 
 # SLURM environment variables
 omegaconf.OmegaConf.register_new_resolver("work", lambda: os.popen("echo $WORK").read().strip())
 omegaconf.OmegaConf.register_new_resolver("scratch", lambda: os.popen("echo $SCRATCH").read().strip())
+omegaconf.OmegaConf.register_new_resolver("dsdir", lambda: os.popen("echo $DSDIR").read().strip())
 
 
 def _load_from_checkpoint(config, tokenizer):

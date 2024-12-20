@@ -20,6 +20,10 @@ SPLITS = ["train", "test"]
 
 
 def get_tokenizer():
+    if os.environ.get("DSDIR"):
+        jz_path = os.path.join(os.environ.get("DSDIR"), "tokenizer")
+        print("Loading from local (JZ)")
+        return AutoTokenizer.from_pretrained(jz_path)
     ret = AutoTokenizer.from_pretrained("gpt2")
     print("Adding", ret.add_special_tokens({"pad_token": "[PAD]", "additional_special_tokens": ["[EPS]"]}))
     return ret
