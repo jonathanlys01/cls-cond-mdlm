@@ -7,9 +7,7 @@
 #SBATCH --output=slurm-logs/dummy_job.out
 #SBATCH --error=slurm-logs/dummy_job.err
 
-#odule purge
-#source $WORK/projects/cls-cond-mdlm/.venv/bin/activate
+module purge
+source $WORK/projects/cls-cond-mdlm/.venv/bin/activate
 
-#srun 
-
-python epsilon/lm1b_dataset.py --cache_dir $SCRATCH/data
+srun python epsilon/lm1b_dataset.py --cache_dir $SCRATCH/data
