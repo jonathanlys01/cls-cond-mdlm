@@ -8,10 +8,11 @@ import datasets
 import numpy as np
 import torch
 from transformers import AutoTokenizer
+
 from utils import possibly_load_from_local
 
 
-ETA = 0.2
+ETA = 0.3  # epsilon token ratio
 BLOCK_SIZE = 256  # OG was 128, double with epsilon tokens
 MASK = [1] * BLOCK_SIZE
 
@@ -92,8 +93,8 @@ def _add_epsilon_tokens(
         "eos": tokenizer.eos_token_id,
         "eps": tokenizer.additional_special_tokens_ids[0],
     },
-    n_range=(int(ETA * BLOCK_SIZE), BLOCK_SIZE - int(ETA * BLOCK_SIZE)),
-    single=False,  # return single block (truncate the rest)
+    n_range=(0, int(ETA * BLOCK_SIZE)),
+    single=True,  # return single block (truncate the rest)
 ):
     n_min, n_max = n_range
     eos = spec_tokens["eos"]
@@ -221,4 +222,6 @@ if __name__ == "__main__":
 
         for block in dataset:
             print(block)
+            text = tokenizer.decode(block["input_ids"], skip_special_tokens=True)
+            print(text)
             break

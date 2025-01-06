@@ -12,6 +12,8 @@ from einops import rearrange
 from torch import nn
 
 
+N_BUCKETS = 64
+
 # Flags required to enable jit fusion kernels
 torch._C._jit_set_profiling_mode(False)
 torch._C._jit_set_profiling_executor(False)
@@ -216,7 +218,7 @@ class LabelEmbedder(nn.Module):
 
     def forward(self, labels):
         labels = self._token_drop(labels)
-        embeddings = self.embedding_table(labels)
+        embeddings = self.embedding_table(labels.flatten())
         return embeddings
 
 
@@ -235,7 +237,8 @@ class ProbaEmbedder(nn.Module):
 
         if method == "bucket":
             # arbitrary number of buckets
-            self.mlp = LabelEmbedder(10, hidden_size, 0.1, zero_null=False)
+            # note that due to the eta parameter, not all buckets will be used
+            self.mlp = LabelEmbedder(N_BUCKETS, hidden_size, 0.1, zero_null=False)
         else:
             self.mlp = nn.Sequential(
                 nn.Linear(1, hidden_size),
@@ -245,6 +248,7 @@ class ProbaEmbedder(nn.Module):
 
     def forward(self, p, eps=1e-3):
         p = torch.clamp(p, eps, 1 - eps)
+
         if self.method == "logit":
             p_emb = torch.log(p / (1 - p))
         elif self.method == "erfinv":
@@ -252,9 +256,10 @@ class ProbaEmbedder(nn.Module):
         elif self.method == "raw":
             p_emb = (p - 0.5) * 2  # scale to [-1, 1]
         elif self.method == "bucket":
-            p_emb = (p * 10).round().long()  # round to nearest integer -> index
+            p_emb = torch.floor(p * N_BUCKETS).long()  # floor to get bucket index
 
         p_emb = self.mlp(p_emb)
+
         return p_emb
 
 

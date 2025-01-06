@@ -5,7 +5,8 @@ defaults:
   - /model: small
   - /strategy: ddp
   - /noise: loglinear
-  - /lr_scheduler: cosine_decay_warmup
+  - /lr_scheduler: constant_warmup 
+#cosine_decay_warmup
 
 mode: train  # train / ppl_eval / sample_eval
 diffusion: absorbing_state
@@ -37,8 +38,9 @@ sampling:
   stride_length: 1
   num_strides: 1
   authorized_labels:
-  - 0.05
-  cfg_scale: 1
+  - 0.2
+  - 0.8
+  cfg_scale: 5
 
 sweep:
   target: "cfg" # cfg, timesteps
@@ -82,7 +84,8 @@ trainer:
   gradient_clip_val: 1.0
   precision: 'bf16' # '16' / '32' / 'bf16'
   num_sanity_val_steps: 2
-  max_steps: 50_000
+  max_steps: -1
+  max_epochs: 10
   log_every_n_steps: 10
   limit_train_batches: 1.0   # train on full dataset, can be used to toggle quick run
   limit_val_batches: 1.0     # validate on full dataset, can be used to toggle quick run

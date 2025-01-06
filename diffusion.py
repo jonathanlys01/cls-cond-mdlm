@@ -73,8 +73,8 @@ class Diffusion(L.LightningModule):
         self.has_eps_tokens = "[EPS]" in self.tokenizer.additional_special_tokens
         if self.has_eps_tokens:
             print("Tokenizer has [EPS] token")
-        # self.tokenizer.vocab_size is not reliable (does not account for special tokens)
-        self.vocab_size = len(self.tokenizer)
+
+        self.vocab_size = self.tokenizer.vocab_size
         self.sampler = self.config.sampling.predictor
         self.gen_ppl_eval_model_name_or_path = self.config.eval.gen_ppl_eval_model_name_or_path
         self.antithetic_sampling = self.config.training.antithetic_sampling
@@ -85,6 +85,10 @@ class Diffusion(L.LightningModule):
             self.vocab_size += 1
         else:
             self.mask_index = self.tokenizer.mask_token_id
+        # self.tokenizer.vocab_size is not reliable (does not account for special tokens)
+        print("Adding special tokens to vocab size", len(self.tokenizer.additional_special_tokens))
+        self.vocab_size = self.vocab_size + len(self.tokenizer.additional_special_tokens)
+
         self.parameterization = self.config.parameterization
         if self.config.backbone == "dit":
             is_local = os.path.exists(config.eval.checkpoint_path)
@@ -405,6 +409,7 @@ class Diffusion(L.LightningModule):
                 samples = self._sample()
                 # Decode the samples to be re-tokenized by eval model
                 text_samples = self.tokenizer.batch_decode(samples, skip_special_tokens=self.has_eps_tokens)
+                text_samples = [text_sample if text_sample else " " for text_sample in text_samples]  # non-empty string
                 if self.config.eval.compute_generative_perplexity:
                     self.compute_generative_perplexity(text_samples)
             if self.trainer.global_rank == 0 and hasattr(self.trainer.logger, "log_table"):

@@ -459,7 +459,8 @@ def get_tokenizer(config):
         tokenizer = Text8Tokenizer()
     elif config.data.tokenizer_name_or_path == "bert-base-uncased":
         tokenizer = transformers.BertTokenizer.from_pretrained("bert-base-uncased")
-    elif "eps" in config.data.tokenizer_name_or_path:
+    elif config.data.train.startswith("epsilon") and config.data.tokenizer_name_or_path == "gpt2":
+        print("Using special tokenizer for epsilon datasets.")
         # Special tokenizer with epsilon tokens
         tokenizer = get_epsilon_tokenizer()
     else:

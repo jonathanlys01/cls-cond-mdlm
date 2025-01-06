@@ -17,7 +17,6 @@ import dataloader
 import diffusion
 import utils
 from cls_cond.classification import SentimentClassifier
-from epsilon.text_dataset import decode_without_epsilon
 
 
 omegaconf.OmegaConf.register_new_resolver("cwd", os.getcwd)
@@ -100,6 +99,7 @@ def generate_samples(config, logger, tokenizer):
     model = _load_from_checkpoint(config=config, tokenizer=tokenizer)
     model.gen_ppl_metric.reset()
     all_texts = []
+    raw_texts = []
     all_labels = []
     if config.eval.disable_ema:
         logger.info("Disabling EMA.")
@@ -121,17 +121,16 @@ def generate_samples(config, logger, tokenizer):
             labels = [random.choice(authorized_labels) for _ in range(config.loader.eval_batch_size)]
             labels = torch.tensor(labels).to("cuda")
             samples = model.restore_model_and_sample(num_steps=config.sampling.steps, labels=labels)
-            if "eps" in config.model.name:
-                text_samples = [decode_without_epsilon(samples[i].tolist()) for i in range(samples.size(0))]
-            else:
-                text_samples = model.tokenizer.batch_decode(samples)
+            text_samples = model.tokenizer.batch_decode(samples, skip_special_tokens=True)
+            raw_samples = model.tokenizer.batch_decode(samples, skip_special_tokens=False)
             model.compute_generative_perplexity(text_samples)
+            raw_texts.extend(raw_samples)
         all_texts.extend(text_samples)
         all_labels.extend(labels.tolist())
     print("Text samples:", text_samples)
     if not config.sampling.semi_ar:
         print("Generative perplexity:", model.gen_ppl_metric.compute())
-    return all_texts, all_labels
+    return all_texts, all_labels, raw_texts
 
 
 def _sweep_timesteps(config, logger, tokenizer):
@@ -257,7 +256,7 @@ def _sweep_cfg(config, logger, tokenizer):
 
 def _gen_acc_eval(config, logger, tokenizer):
     logger.info("Evaluating generative accuracy.")
-    gen_texts, gt_labels = generate_samples(config, logger, tokenizer)
+    gen_texts, gt_labels, _ = generate_samples(config, logger, tokenizer)
     classifier = SentimentClassifier()
     pred_labels = classifier.predict(gen_texts)
     acc = classifier.compute_accuracy(pred_labels, gt_labels)
@@ -346,11 +345,16 @@ def main(config):
     tokenizer = dataloader.get_tokenizer(config)
 
     if config.mode == "sample_eval":
-        gen_texts, _ = generate_samples(config, logger, tokenizer)
+        gen_texts, labels, raw_texts = generate_samples(config, logger, tokenizer)
         # write generated samples to file
         with fsspec.open("{}/generated_samples.txt".format(config.checkpointing.save_dir), "w") as fp:
-            for text in gen_texts:
-                fp.write(text + "\n")
+            for text, label, raw_text in zip(gen_texts, labels, raw_texts):
+                to_write = (
+                    f"Label: {label}\n"  # noqa
+                    f"Generated text: {text}\n"
+                    f"Raw text (with special tokens): {raw_text}\n\n"
+                )
+                fp.write(to_write)
     elif config.mode == "ppl_eval":
         _ppl_eval(config, logger, tokenizer)
     elif config.mode == "sweep":

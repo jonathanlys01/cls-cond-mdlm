@@ -31,11 +31,13 @@ fi
 $PRE python main.py \
   model=eps-small \
   data=epsilon-lm1b \
-  trainer.max_steps=54_000 \
   parameterization=subs \
-  model.length=256 \
   eval.compute_generative_perplexity=True \
-  sampling.steps=1_000 \
-  loader.global_batch_size=32 \
-  loader.eval_batch_size=1 \
-  wandb.name=small-epsilon-lm1b \
+  sampling.steps=10_000 \
+  loader.global_batch_size=8 \
+  loader.eval_batch_size=8 \
+  model.proba_method="bucket" \
+  model.length=256 \
+  trainer.max_epochs=2 \
+  wandb.name=small-epsilon-lm1b-bucket \
+  #wandb=False \

@@ -11,4 +11,4 @@ tie_word_embeddings: False
 # Epsilon-rate conditional implementation of MDLM
 conditional: True
 cond_method: "proba" # probability-based conditioning
-proba_method: "erfinv" # inverse error function + mlp
+proba_method: "bucket" # bucket + embed 
