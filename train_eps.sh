@@ -3,8 +3,8 @@
 #SBATCH --account=vaz@a100
 #SBATCH --constraint=a100
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=2 # --ntasks=2 not PL compatible
-#SBATCH --gres=gpu:2
+#SBATCH --ntasks-per-node=4 # --ntasks not PL compatible
+#SBATCH --gres=gpu:4
 #SBATCH --cpus-per-task=10
 #SBATCH --hint=nomultithread
 
@@ -34,10 +34,10 @@ $PRE python main.py \
   parameterization=subs \
   eval.compute_generative_perplexity=True \
   sampling.steps=10_000 \
-  loader.global_batch_size=8 \
-  loader.eval_batch_size=8 \
+  loader.global_batch_size=64 \
+  loader.eval_batch_size=64 \
   model.proba_method="bucket" \
   model.length=256 \
   trainer.max_epochs=2 \
-  wandb.name=small-epsilon-lm1b-bucket \
+  wandb.name=epsilon-lm1b-no-rope \
   #wandb=False \

@@ -638,7 +638,13 @@ class Diffusion(L.LightningModule):
         dt = (1 - eps) / num_steps
         p_x0_cache = None
 
-        for i in range(num_steps):
+        start = 0
+
+        if init_x:
+            mask_rate = (init_x == self.mask_index).sum() / init_x.numel()
+            start = int(mask_rate * num_steps)
+
+        for i in range(start, num_steps):
             t = timesteps[i] * torch.ones(x.shape[0], 1, device=self.device)
             if self.sampler == "ddpm":
                 x = self._ddpm_update(

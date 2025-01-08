@@ -10,4 +10,5 @@
 module purge
 source $WORK/projects/cls-cond-mdlm/.venv/bin/activate
 
+export PYTHONPATH=$WORK/projects/cls-cond-mdlm:$PYTHONPATH
 srun python epsilon/lm1b_dataset.py --cache_dir $SCRATCH/data
