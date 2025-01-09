@@ -11,6 +11,8 @@ import torch.nn.functional as F
 from einops import rearrange
 from torch import nn
 
+from models._position import get_slopes
+
 
 N_BUCKETS = 64
 
@@ -332,19 +334,26 @@ class DDiTBlock(nn.Module):
 
         qkv = self.attn_qkv(x)
         qkv = rearrange(qkv, "b s (three h d) -> b s three h d", three=3, h=self.n_heads)
-        with torch.cuda.amp.autocast(enabled=False):
+
+        """ with torch.cuda.amp.autocast(enabled=False): # TODO: remove after tests
             cos, sin = rotary_cos_sin
             qkv = apply_rotary_pos_emb(qkv, cos.to(qkv.dtype), sin.to(qkv.dtype))
+        """
         qkv = rearrange(qkv, "b s ... -> (b s) ...")
         if seqlens is None:
             cu_seqlens = torch.arange(0, (batch_size + 1) * seq_len, step=seq_len, dtype=torch.int32, device=qkv.device)
         else:
             cu_seqlens = seqlens.cumsum(-1)
+
+        # qkv is (total, 3, nheads, headdim)
+        slopes = get_slopes(n=qkv.shape[-2], return_tensor=True).to(qkv.device)
+
         x = flash_attn.flash_attn_varlen_qkvpacked_func(
             qkv,
             cu_seqlens,
             seq_len,
             0.0,
+            alibi_slopes=slopes,
             causal=False,
         )
 

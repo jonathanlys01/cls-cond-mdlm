@@ -8,7 +8,9 @@ import torch
 
 
 # https://github.com/ofirpress/attention_with_linear_biases/blob/master/fairseq/models/transformer.py#L742
-def get_slopes(n):
+
+
+def _get_slopes(n):
     def get_slopes_power_of_2(n):
         start = 2 ** (-(2 ** -(math.log2(n) - 3)))
         ratio = start
@@ -20,8 +22,15 @@ def get_slopes(n):
         closest_power_of_2 = 2 ** math.floor(math.log2(n))
         return (
             get_slopes_power_of_2(closest_power_of_2)
-            + get_slopes(2 * closest_power_of_2)[0::2][: n - closest_power_of_2]
+            + _get_slopes(2 * closest_power_of_2)[0::2][: n - closest_power_of_2]
         )
+
+
+def get_slopes(n, return_tensor=True):
+    slopes = _get_slopes(n)
+    if return_tensor:
+        return torch.tensor(slopes)
+    return slopes
 
 
 class ALiBi(torch.nn.Module):
@@ -49,11 +58,12 @@ class ALiBi(torch.nn.Module):
         return self.cached_bias
 
 
-# Example usage
-dim = 10
-model = ALiBi(dim)
-input_tensor = torch.zeros((dim, dim)).int()
-output = model(input_tensor)
+if __name__ == "__main__":
+    # TODO: complete
+    dim = 10
+    model = ALiBi(dim)
+    input_tensor = torch.zeros((dim, dim)).int()
+    output = model(input_tensor)
 
-print("Output with bias added:")
-print(output)
+    print("Output with bias added:")
+    print(output)

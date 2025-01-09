@@ -38,6 +38,6 @@ $PRE python main.py \
   loader.eval_batch_size=64 \
   model.proba_method="bucket" \
   model.length=256 \
-  trainer.max_epochs=6 \
-  wandb.name=long-epsilon-lm1b \
+  trainer.max_epochs=2 \
+  wandb.name=alibi-epsilon-lm1b \
   #wandb=False \
