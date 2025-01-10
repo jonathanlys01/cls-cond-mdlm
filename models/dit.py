@@ -11,7 +11,7 @@ import torch.nn.functional as F
 from einops import rearrange
 from torch import nn
 
-from models._position import get_slopes
+from models._position import get_slopes  # noqa: F401
 
 
 N_BUCKETS = 64
@@ -94,7 +94,10 @@ class Rotary(torch.nn.Module):
         if seq_len != self.seq_len_cached:
             self.seq_len_cached = seq_len
             t = torch.arange(x.shape[seq_dim], device=x.device).type_as(self.inv_freq)
-            freqs = torch.einsum("i,j->ij", t, self.inv_freq.clone())
+
+            # freqs = torch.einsum("i,j->ij", t, self.inv_freq.clone())
+            freqs = torch.outer(t, self.inv_freq)
+
             emb = torch.cat((freqs, freqs), dim=-1).to(x.device)
             # dims are: batch, seq_len, qkv, head, dim
             self.cos_cached = emb.cos()[None, :, None, None, :].repeat(1, 1, 3, 1, 1)
@@ -335,18 +338,26 @@ class DDiTBlock(nn.Module):
         qkv = self.attn_qkv(x)
         qkv = rearrange(qkv, "b s (three h d) -> b s three h d", three=3, h=self.n_heads)
 
-        """ with torch.cuda.amp.autocast(enabled=False): # TODO: remove after tests
+        qkv_rope, qkv_nope = torch.chunk(qkv, 2, dim=3)
+
+        with torch.cuda.amp.autocast(enabled=False):
             cos, sin = rotary_cos_sin
-            qkv = apply_rotary_pos_emb(qkv, cos.to(qkv.dtype), sin.to(qkv.dtype))
-        """
+            qkv_rope = apply_rotary_pos_emb(qkv_rope, cos.to(qkv_rope.dtype), sin.to(qkv_rope.dtype))
+
+        qkv = torch.cat([qkv_rope, qkv_nope], dim=3)
         qkv = rearrange(qkv, "b s ... -> (b s) ...")
         if seqlens is None:
             cu_seqlens = torch.arange(0, (batch_size + 1) * seq_len, step=seq_len, dtype=torch.int32, device=qkv.device)
         else:
             cu_seqlens = seqlens.cumsum(-1)
 
-        # qkv is (total, 3, nheads, headdim)
-        slopes = get_slopes(n=qkv.shape[-2], return_tensor=True).to(qkv.device)
+        # qkv : (total, 3, nheads, headdim)
+        slopes_rope = [0 for _ in range(qkv.shape[-2] // 2)]  # no alibi for roped heads
+        slopes_nope = get_slopes(n=qkv.shape[-2] // 2, return_tensor=False)
+
+        slopes = slopes_rope + slopes_nope
+
+        slopes = torch.tensor(slopes, device=qkv.device)
 
         x = flash_attn.flash_attn_varlen_qkvpacked_func(
             qkv,

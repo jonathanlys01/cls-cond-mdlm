@@ -39,5 +39,5 @@ $PRE python main.py \
   model.proba_method="bucket" \
   model.length=256 \
   trainer.max_epochs=2 \
-  wandb.name=alibi-epsilon-lm1b \
+  wandb.name=alibi-rope-hybrid-epsilon-lm1b \
   #wandb=False \
