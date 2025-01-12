@@ -3,6 +3,7 @@ WIP
 """
 
 import math
+import time
 
 import torch
 import torch.nn.functional as F
@@ -131,19 +132,31 @@ def test_alibi():
     dim = 128
     device = torch.device("cuda")
     # alibi_mod = generate_alibi_bias(H)
+    N = 10_000
 
-    for _ in tqdm(range(1_000), desc="Flex (no op)"):
+    # Compile flex_attention for speed
+    start = time.time()
+    compiled_flex_attention = torch.compile(flex_attention, fullgraph=True, mode="max-autotune")
+    q = torch.randn(1, 5, H, dim // H, device=device, requires_grad=True)
+    k = torch.randn(1, 5, H, dim // H, device=device, requires_grad=True)
+    v = torch.randn(1, 5, H, dim // H, device=device, requires_grad=True)
+    out = compiled_flex_attention(q, k, v, enable_gqa=True)
+    out.sum().backward()
+
+    print(f"Compilation + warmup took {time.time() - start:.2f}s")
+
+    for _ in tqdm(range(N), desc="Flex (no op)"):
         q = torch.randn(1, 5, H, dim // H, device=device, requires_grad=True)
         k = torch.randn(1, 5, H, dim // H, device=device, requires_grad=True)
         v = torch.randn(1, 5, H, dim // H, device=device, requires_grad=True)
 
-        out = flex_attention(q, k, v, enable_gqa=True)
+        out = compiled_flex_attention(q, k, v, enable_gqa=True)
 
         out.sum().backward()
 
     print(out.shape)
 
-    for _ in tqdm(range(1_000), desc="Flash/Efficient"):
+    for _ in tqdm(range(N), desc="Flash/Efficient"):
         q = torch.randn(1, 5, H, dim // H, device=device, requires_grad=True)
         k = torch.randn(1, 5, H, dim // H, device=device, requires_grad=True)
         v = torch.randn(1, 5, H, dim // H, device=device, requires_grad=True)
@@ -155,7 +168,7 @@ def test_alibi():
 
     print(out.shape)
 
-    for _ in tqdm(range(1_000), desc="Math"):
+    for _ in tqdm(range(N), desc="Math"):
         q = torch.randn(1, 5, H, dim // H, device=device, requires_grad=True)
         k = torch.randn(1, 5, H, dim // H, device=device, requires_grad=True)
         v = torch.randn(1, 5, H, dim // H, device=device, requires_grad=True)
