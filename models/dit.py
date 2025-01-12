@@ -11,7 +11,7 @@ import torch.nn.functional as F
 from einops import rearrange
 from torch import nn
 
-from models._position import get_slopes  # noqa: F401
+from models.position import get_slopes
 
 
 N_BUCKETS = 64
