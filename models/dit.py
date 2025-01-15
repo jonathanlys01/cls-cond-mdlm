@@ -427,8 +427,8 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
         self.ape = APE(
             config.model.hidden_size,
             default_seq_len=config.model.length,
-            data_dependent=True,
-            epsilon_idx=epsilon_index,
+            data_dependent=False,  # TODO: change after training vanilla ape
+            # epsilon_idx=epsilon_index,
         )
 
         # Does nothing if num_classes and/or label_dropout are not defined

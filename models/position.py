@@ -114,7 +114,10 @@ class APE(torch.nn.Module):
         self.cached_pe = None
         if data_dependent:
             assert epsilon_idx is not None, "epsilon_idx must be provided for data-dependent APE"
-        self.epsilon_idx = epsilon_idx
+            self.epsilon_idx = epsilon_idx
+
+        else:
+            self.epsilon_idx = None
 
         device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
