@@ -87,7 +87,15 @@ class Diffusion(L.LightningModule):
             self.mask_index = self.tokenizer.mask_token_id
         # self.tokenizer.vocab_size is not reliable (does not account for special tokens)
         print("Adding special tokens to vocab size", len(self.tokenizer.additional_special_tokens))
+
+        if self.has_eps_tokens:
+            self.epsilon_index = self.tokenizer.additional_special_tokens.index("[EPS]") + self.vocab_size
+
+        else:
+            self.epsilon_index = None
+
         self.vocab_size = self.vocab_size + len(self.tokenizer.additional_special_tokens)
+        # vocab size is now not reliable
 
         self.parameterization = self.config.parameterization
         if self.config.backbone == "dit":
@@ -95,10 +103,17 @@ class Diffusion(L.LightningModule):
             if config.eval.checkpoint_path and not is_local:  # If we load from HF (remote)
                 print(f"Loading checkpoint from {config.eval.checkpoint_path}")
                 self.backbone = models.dit.DIT.from_pretrained(
-                    config.eval.checkpoint_path, config=config, vocab_size=self.vocab_size
+                    config.eval.checkpoint_path,
+                    config=config,
+                    vocab_size=self.vocab_size,
+                    epsilon_index=self.epsilon_index,
                 )
             else:
-                self.backbone = models.dit.DIT(self.config, vocab_size=self.vocab_size)
+                self.backbone = models.dit.DIT(
+                    self.config,
+                    vocab_size=self.vocab_size,
+                    epsilon_index=self.epsilon_index,
+                )
         elif self.config.backbone == "dimamba":
             self.backbone = models.dimamba.DiMamba(
                 self.config, vocab_size=self.vocab_size, pad_token_id=self.tokenizer.pad_token_id

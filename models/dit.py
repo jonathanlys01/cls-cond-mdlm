@@ -11,7 +11,7 @@ import torch.nn.functional as F
 from einops import rearrange
 from torch import nn
 
-from models.position import get_slopes
+from models.position import APE, ALiBiPE, get_slopes  # noqa: F401
 
 
 N_BUCKETS = 64
@@ -109,11 +109,6 @@ class Rotary(torch.nn.Module):
         return self.cos_cached, self.sin_cached
 
 
-def rotate_half(x):
-    x1, x2 = x[..., : x.shape[-1] // 2], x[..., x.shape[-1] // 2 :]
-    return torch.cat((-x2, x1), dim=-1)
-
-
 def apply_rotary_pos_emb(qkv, cos, sin):
     cos = cos[0, :, 0, 0, : cos.shape[-1] // 2]
     sin = sin[0, :, 0, 0, : sin.shape[-1] // 2]
@@ -128,6 +123,8 @@ def modulate(x, shift, scale):  # noqa: F811
 #################################################################################
 #                                  Layers                                       #
 #################################################################################
+
+
 class LayerNorm(nn.Module):
     def __init__(self, dim):
         super().__init__()
@@ -151,6 +148,8 @@ def residual_linear(x, W, x_skip, residual_scale):
 #################################################################################
 #               Embedding Layers for Timesteps and Class Labels                 #
 #################################################################################
+
+
 class TimestepEmbedder(nn.Module):
     """
     Embeds scalar timesteps into vector representations.
@@ -336,6 +335,7 @@ class DDiTBlock(nn.Module):
         x = modulate_fused(self.norm1(x), shift_msa, scale_msa)
 
         qkv = self.attn_qkv(x)
+        """
         qkv = rearrange(qkv, "b s (three h d) -> b s three h d", three=3, h=self.n_heads)
 
         qkv_rope, qkv_nope = torch.chunk(qkv, 2, dim=3)
@@ -345,7 +345,11 @@ class DDiTBlock(nn.Module):
             qkv_rope = apply_rotary_pos_emb(qkv_rope, cos.to(qkv_rope.dtype), sin.to(qkv_rope.dtype))
 
         qkv = torch.cat([qkv_rope, qkv_nope], dim=3)
-        qkv = rearrange(qkv, "b s ... -> (b s) ...")
+        qkv"""
+
+        # qkv = rearrange(qkv, "b s ... -> (b s) ...")
+        qkv = rearrange(qkv, "b s (three h d) -> (b s) three h d", h=self.n_heads, three=3)
+
         if seqlens is None:
             cu_seqlens = torch.arange(0, (batch_size + 1) * seq_len, step=seq_len, dtype=torch.int32, device=qkv.device)
         else:
@@ -409,7 +413,7 @@ class DDitFinalLayer(nn.Module):
 
 
 class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
-    def __init__(self, config, vocab_size: int):
+    def __init__(self, config, vocab_size: int, epsilon_index: int):
         super().__init__()
         if isinstance(config, dict):
             config = omegaconf.OmegaConf.create(config)
@@ -419,6 +423,13 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
 
         self.vocab_embed = EmbeddingLayer(config.model.hidden_size, vocab_size)
         self.sigma_map = TimestepEmbedder(config.model.cond_dim)
+
+        self.ape = APE(
+            config.model.hidden_size,
+            default_seq_len=config.model.length,
+            data_dependent=True,
+            epsilon_idx=epsilon_index,
+        )
 
         # Does nothing if num_classes and/or label_dropout are not defined
         if hasattr(config.model, "conditional") and config.model.conditional and hasattr(config.model, "cond_method"):
@@ -470,6 +481,8 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
 
     def forward(self, indices, sigma, labels=None):
         x = self.vocab_embed(indices)
+
+        x = self.ape(x, indices)
 
         if labels is None:
             c = F.silu(self.sigma_map(sigma))
