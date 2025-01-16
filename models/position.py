@@ -140,7 +140,7 @@ class APE(torch.nn.Module):
             pe[:, 0::2] = torch.sin(position * self.div_term)
             pe[:, 1::2] = torch.cos(position * self.div_term)
             self.cached_pe = pe
-        return self.cached_pe[:seq_len]  # (seq_len, dim)
+        return self.cached_pe[:seq_len].to(device)
 
     def forward(self, x: torch.Tensor, indices: torch.Tensor) -> torch.Tensor:
         B, seq_len, dim = x.shape
