@@ -336,7 +336,7 @@ class DDiTBlock(nn.Module):
 
         qkv = self.attn_qkv(x)
 
-        qkv = rearrange(qkv, "b s (three h d) -> b s three h d", three=3, h=self.n_heads)
+        """qkv = rearrange(qkv, "b s (three h d) -> b s three h d", three=3, h=self.n_heads)
 
         qkv_rope, qkv_nope = torch.chunk(qkv, 2, dim=3)
 
@@ -347,10 +347,10 @@ class DDiTBlock(nn.Module):
         qkv = torch.cat([qkv_rope, qkv_nope], dim=3)
         qkv
 
-        qkv = rearrange(qkv, "b s ... -> (b s) ...")
+        qkv = rearrange(qkv, "b s ... -> (b s) ...")"""
 
         # for no-rope
-        # qkv = rearrange(qkv, "b s (three h d) -> (b s) three h d", h=self.n_heads, three=3)
+        qkv = rearrange(qkv, "b s (three h d) -> (b s) three h d", h=self.n_heads, three=3)
 
         if seqlens is None:
             cu_seqlens = torch.arange(0, (batch_size + 1) * seq_len, step=seq_len, dtype=torch.int32, device=qkv.device)
@@ -362,15 +362,16 @@ class DDiTBlock(nn.Module):
         # slopes_nope = get_slopes(n=qkv.shape[-2] // 2, return_tensor=False)
 
         # slopes = slopes_rope + slopes_nope
-
         # slopes = torch.tensor(slopes, device=qkv.device)
+
+        slopes = get_slopes(n=qkv.shape[-2], return_tensor=True).to(qkv.device)
 
         x = flash_attn.flash_attn_varlen_qkvpacked_func(
             qkv,
             cu_seqlens,
             seq_len,
             0.0,
-            # alibi_slopes=slopes,
+            alibi_slopes=slopes,
             causal=False,
         )
 
@@ -426,12 +427,12 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
         self.vocab_embed = EmbeddingLayer(config.model.hidden_size, vocab_size)
         self.sigma_map = TimestepEmbedder(config.model.cond_dim)
 
-        """self.ape = APE(
+        self.ape = APE(
             config.model.hidden_size,
             default_seq_len=config.model.length,
             data_dependent=True,
             epsilon_idx=epsilon_index,
-        )"""
+        )
 
         # Does nothing if num_classes and/or label_dropout are not defined
         if hasattr(config.model, "conditional") and config.model.conditional and hasattr(config.model, "cond_method"):
@@ -484,7 +485,7 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
     def forward(self, indices, sigma, labels=None):
         x = self.vocab_embed(indices)
 
-        # x = self.ape(x, indices)
+        x = self.ape(x, indices)
 
         if labels is None:
             c = F.silu(self.sigma_map(sigma))
