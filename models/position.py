@@ -3,9 +3,9 @@ WIP
 """
 
 import math
-import time
 
 import flash_attn
+import flash_attn.layers.rotary as flash_rotary
 import torch
 import torch.nn.functional as F
 from torch.nn.attention import SDPBackend, sdpa_kernel
@@ -74,22 +74,44 @@ def generate_alibi_bias(H: int) -> _score_mod_signature:
 
 
 class ALiBiPE(torch.nn.Module):
-    def __init__(self, num_heads: int, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(
+        self,
+        num_heads: int,
+        epsilon_idx: int,
+        alpha: float = 0.1,
+        autocast_dtype=torch.bfloat16,
+    ):
+        super().__init__()
         self.num_heads = num_heads
-
-        self.score_mod = generate_alibi_bias(num_heads)
+        self.epsilon_idx = epsilon_idx
+        self.alpha = alpha
+        self.autocast_dtype = autocast_dtype
 
         self.compiled_fn = torch.compile(flex_attention, fullgraph=True, mode="max-autotune", dynamic=False)
 
     def forward(self, qkv: torch.Tensor, indices: torch.Tensor) -> torch.Tensor:
-        B, L, THREE, H, D = qkv.shape
+        B, H, THREE, L, D = qkv.shape
         assert THREE == 3, "qkv must have 3 dimensions"  # noqa: PLR2004
+        assert D % H == 0, "D must be divisible by H"
+        assert self.num_heads == H, "num_heads must match H"
 
         q, k, v = qkv.unbind(dim=-3)
 
-        with torch.amp.autocast("cuda", dtype=torch.bfloat16):
-            out = self.compiled_fn(q, k, v, score_mod=self.score_mod)
+        out_bias_base = indices == self.epsilon_idx  # (B, L)
+
+        def alibi_mod(score, b, h, q_idx, kv_idx):
+            scale = torch.exp2(-((h + 1) * 8.0 / H))
+            in_bias = torch.abs(kv_idx - q_idx) * scale
+
+            # Add bias for epsilon tokens (if any)
+            out_bias = out_bias_base[b, q_idx] + out_bias_base[b, kv_idx]
+
+            bias = in_bias + self.alpha * out_bias
+
+            return score - bias
+
+        with torch.amp.autocast("cuda", dtype=self.autocast_dtype):
+            out = self.compiled_fn(q, k, v, score_mod=alibi_mod)
 
         return out
 
@@ -172,7 +194,7 @@ class APE(torch.nn.Module):
 def apply_rotary_pos_emb(qkv, cos, sin):
     cos = cos[0, :, 0, 0, : cos.shape[-1] // 2]
     sin = sin[0, :, 0, 0, : sin.shape[-1] // 2]
-    return flash_attn.layers.rotary.apply_rotary_emb_qkv_(qkv, cos, sin)
+    return flash_rotary.apply_rotary_emb_qkv_(qkv, cos, sin)
 
 
 class RoPE(torch.nn.Module):
@@ -212,10 +234,10 @@ class RoPE(torch.nn.Module):
         return self.apply_rotary_pos_emb(x, cos, sin)
 
 
-#################################################################################
+######################################   Tests   ########################################
 
 
-def test_ape():
+def test_ape(sweep=False):
     import io
 
     from PIL import Image
@@ -254,7 +276,8 @@ def test_ape():
     result = ape(x, indices)
     _simple_viz(result[0].cpu().detach().numpy(), dim).save("ape_no_eps.png")
 
-    return
+    if not sweep:
+        return
 
     def generate_gif(base_frequencies, filename="ape_sweep.gif"):
         images = []
@@ -278,72 +301,61 @@ def test_ape():
     generate_gif(base_frequencies)
 
 
-def benchmark_attn():
+def test_alibi():
     B = 8
-    L = 128
-    H = 12
-    dim = 768
+    L = 256
+    H = 8
+    dim = 512
 
-    device = torch.device("cuda")
-    # alibi_mod = generate_alibi_bias(H)
     N = 10_000
 
-    DTYPE = torch.float32
+    device = torch.device("cuda")
+    acast_dtype = torch.bfloat16
 
-    # Compile flex_attention for speed
-    start = time.time()
+    alibi = ALiBiPE(num_heads=H, epsilon_idx=2, alpha=0.1, autocast_dtype=acast_dtype)
 
-    compiled_flex_attention = torch.compile(flex_attention, fullgraph=True, mode="max-autotune", dynamic=False)
-    q = torch.randn(B, L, H, dim // H, device=device, requires_grad=True, dtype=DTYPE)
-    k = torch.randn(B, L, H, dim // H, device=device, requires_grad=True, dtype=DTYPE)
-    v = torch.randn(B, L, H, dim // H, device=device, requires_grad=True, dtype=DTYPE)
-    out = compiled_flex_attention(q, k, v)
+    # compile warmup (not benchmarked)
+
+    qkv = torch.randn(B, H, 3, L, dim // H, device=device, requires_grad=True)
+    indices = torch.ones(B, L, device=device)
+    indices.index_fill_(1, torch.randint(0, L, (int(0.15 * L),), device=device), 2)
+
+    out = alibi(qkv, indices)
     out.sum().backward()
 
-    print(f"Compilation + warmup took {time.time() - start:.2f}s")
+    for _ in tqdm(range(N), desc="ALiBi"):
+        qkv = torch.randn(B, H, 3, L, dim // H, device=device, requires_grad=True)
 
-    for _ in tqdm(range(N), desc="Flex (no op)"):
-        q = torch.randn(B, L, H, dim // H, device=device, requires_grad=True, dtype=DTYPE)
-        k = torch.randn(B, L, H, dim // H, device=device, requires_grad=True, dtype=DTYPE)
-        v = torch.randn(B, L, H, dim // H, device=device, requires_grad=True, dtype=DTYPE)
+        indices = torch.ones(B, L, device=device)
+        indices.index_fill_(1, torch.randint(0, L, (int(0.15 * L),), device=device), 2)
 
-        with torch.amp.autocast("cuda", dtype=torch.bfloat16):
-            out = compiled_flex_attention(q, k, v)
+        out = alibi(qkv, indices)
 
         out.sum().backward()
-        torch.cuda.empty_cache()
 
-    print(out.shape)
+    for _ in tqdm(range(N), desc="Flash/efficient"):
+        qkv = torch.randn(B, H, 3, L, dim // H, device=device, requires_grad=True)
 
-    for _ in tqdm(range(N), desc="Flash/Efficient"):
-        q = torch.randn(B, L, H, dim // H, device=device, requires_grad=True, dtype=DTYPE)
-        k = torch.randn(B, L, H, dim // H, device=device, requires_grad=True, dtype=DTYPE)
-        v = torch.randn(B, L, H, dim // H, device=device, requires_grad=True, dtype=DTYPE)
+        q, k, v = qkv.unbind(dim=-3)
 
         with sdpa_kernel([SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION]):
-            out = F.scaled_dot_product_attention(q, k, v)
+            out = F.scaled_dot_product_attention(q, k, v, is_causal=False)
 
         out.sum().backward()
 
-        torch.cuda.empty_cache()
+    for _ in tqdm(range(N), desc="Flash attention"):
+        qkv = torch.randn(B, L, 3, H, dim // H, device=device, requires_grad=True, dtype=acast_dtype)
 
-    print(out.shape)
-
-    for _ in tqdm(range(N), desc="Math"):
-        q = torch.randn(B, L, H, dim // H, device=device, requires_grad=True, dtype=DTYPE)
-        k = torch.randn(B, L, H, dim // H, device=device, requires_grad=True, dtype=DTYPE)
-        v = torch.randn(B, L, H, dim // H, device=device, requires_grad=True, dtype=DTYPE)
-
-        with sdpa_kernel([SDPBackend.MATH]):
-            with torch.amp.autocast("cuda", dtype=torch.bfloat16):
-                out = F.scaled_dot_product_attention(q, k, v)
+        out = flash_attn.flash_attn_qkvpacked_func(
+            qkv,
+            0.0,
+            causal=False,
+        )
 
         out.sum().backward()
-        torch.cuda.empty_cache()
-
-    print(out.shape)
 
 
 if __name__ == "__main__":
     # benchmark_attn()
-    test_ape()
+    # test_ape()
+    test_alibi()

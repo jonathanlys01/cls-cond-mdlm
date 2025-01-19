@@ -34,10 +34,10 @@ $PRE python main.py \
   parameterization=subs \
   eval.compute_generative_perplexity=True \
   sampling.steps=10_000 \
-  loader.global_batch_size=64 \
+  loader.global_batch_size=8 \
   loader.eval_batch_size=64 \
   model.proba_method="bucket" \
   model.length=256 \
   trainer.max_epochs=2 \
-  wandb.name=data-dep-ape-epsilon-lm1b \
+  wandb.name=half-rope-h-epsilon-lm1b \
   # wandb=False \
