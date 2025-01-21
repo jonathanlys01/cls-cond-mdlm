@@ -9,9 +9,9 @@
 #SBATCH --hint=nomultithread
 
 
-#SBATCH --job-name=epsilon-lm1b-2
-#SBATCH --output=slurm-logs/epsilon-lm1b_2.out
-#SBATCH --error=slurm-logs/epsilon-lm1b_2.err
+#SBATCH --job-name=epsilon-lm1b
+#SBATCH --output=slurm-logs/epsilon-lm1b.out
+#SBATCH --error=slurm-logs/epsilon-lm1b.err
 #SBATCH --time=10:00:00
 #SBATCH --qos=qos_gpu_a100-t3
 
@@ -39,5 +39,5 @@ $PRE python main.py \
   model.proba_method="bucket" \
   model.length=256 \
   trainer.max_epochs=2 \
-  wandb.name=ape-and-alibi-epsilon-lm1b \
+  wandb.name=ape-and-alibi-no_data_dep-epsilon-lm1b \
   #wandb=False \

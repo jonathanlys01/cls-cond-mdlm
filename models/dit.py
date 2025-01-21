@@ -430,7 +430,7 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
         self.ape = APE(
             config.model.hidden_size,
             default_seq_len=config.model.length,
-            data_dependent=True,
+            data_dependent=False,
             epsilon_idx=epsilon_index,
         )
 
