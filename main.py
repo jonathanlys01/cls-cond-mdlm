@@ -4,13 +4,14 @@ import time
 
 import fsspec
 import hydra
-import lightning as L
+import lightning
 import numpy as np
 import omegaconf
 import pandas as pd
 import rich.syntax
 import rich.tree
 import torch
+from lightning.pytorch.loggers import WandbLogger
 from tqdm import tqdm
 
 import dataloader
@@ -37,7 +38,7 @@ def _load_from_checkpoint(config, tokenizer):
     return diffusion.Diffusion.load_from_checkpoint(config.eval.checkpoint_path, tokenizer=tokenizer, config=config)
 
 
-@L.pytorch.utilities.rank_zero_only
+@lightning.pytorch.utilities.rank_zero_only
 def _print_config(config: omegaconf.DictConfig, resolve: bool = True, save_cfg: bool = True) -> None:
     """Prints content of DictConfig using Rich library and its tree structure.
 
@@ -66,7 +67,7 @@ def _print_config(config: omegaconf.DictConfig, resolve: bool = True, save_cfg: 
             rich.print(tree, file=fp)
 
 
-@L.pytorch.utilities.rank_zero_only
+@lightning.pytorch.utilities.rank_zero_only
 def _print_batch(train_ds, valid_ds, tokenizer, k=64):
     for dl_type, dl in [("train", train_ds), ("valid", valid_ds)]:
         print(f"Printing {dl_type} dataloader batch.")
@@ -275,7 +276,11 @@ def _ppl_eval(config, logger, tokenizer):
     wandb_logger = None
     print(config.get("wandb", None))
     if config.get("wandb", None) is not None and config.get("wandb") is not False:
-        wandb_logger = L.pytorch.loggers.WandbLogger(config=omegaconf.OmegaConf.to_object(config), **config.wandb)
+        wandb_logger = WandbLogger(
+            config=omegaconf.OmegaConf.to_object(config),
+            offline=os.environ.get("WANDB_MODE") == "offline",
+            **config.wandb,
+        )
     callbacks = []
     if "callbacks" in config:
         for _, callback in config.callbacks.items():
@@ -303,7 +308,11 @@ def _train(config, logger, tokenizer):
     logger.info("Starting Training.")
     wandb_logger = None
     if config.get("wandb", None) is not None and config.get("wandb") is not False:
-        wandb_logger = L.pytorch.loggers.WandbLogger(config=omegaconf.OmegaConf.to_object(config), **config.wandb)
+        wandb_logger = WandbLogger(
+            config=omegaconf.OmegaConf.to_object(config),
+            offline=os.environ.get("WANDB_MODE") == "offline",
+            **config.wandb,
+        )
 
     if (
         config.checkpointing.resume_from_ckpt
@@ -338,7 +347,7 @@ def _train(config, logger, tokenizer):
 @hydra.main(version_base=None, config_path="configs", config_name="config")
 def main(config):
     """Main entry point for training."""
-    L.seed_everything(config.seed)
+    lightning.seed_everything(config.seed)
     _print_config(config, resolve=True, save_cfg=True)
 
     logger = utils.get_logger(__name__)
