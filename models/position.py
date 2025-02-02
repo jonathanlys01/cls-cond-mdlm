@@ -8,6 +8,7 @@ import flash_attn
 import flash_attn.layers.rotary as flash_rotary
 import torch
 import torch.nn.functional as F
+from einops import rearrange
 from torch.nn.attention import SDPBackend, sdpa_kernel
 from torch.nn.attention.flex_attention import _score_mod_signature, flex_attention
 from tqdm import tqdm
@@ -78,7 +79,7 @@ class ALiBiPE(torch.nn.Module):
         self,
         num_heads: int,
         epsilon_idx: int,
-        alpha: float = 0.1,
+        alpha: float = None,
         autocast_dtype=torch.bfloat16,
     ):
         super().__init__()
@@ -87,31 +88,97 @@ class ALiBiPE(torch.nn.Module):
         self.alpha = alpha
         self.autocast_dtype = autocast_dtype
 
-        self.compiled_fn = torch.compile(flex_attention, fullgraph=True, mode="max-autotune", dynamic=False)
+        self.compiled_fn = torch.compile(
+            flex_attention,
+        )  # fullgraph=True, mode="max-autotune", dynamic=False)
+
+    def _get_alpha(self, L):
+        """
+        Average column wise sum of the bias matrix.
+        Returned if alpha is not provided.
+        """
+        return (L * L - 1) / 3
 
     def forward(self, qkv: torch.Tensor, indices: torch.Tensor) -> torch.Tensor:
         B, H, THREE, L, D = qkv.shape
         assert THREE == 3, "qkv must have 3 dimensions"  # noqa: PLR2004
-        assert D % H == 0, "D must be divisible by H"
         assert self.num_heads == H, "num_heads must match H"
 
         q, k, v = qkv.unbind(dim=-3)
 
         out_bias_base = indices == self.epsilon_idx  # (B, L)
 
+        if self.alpha is None:
+            self.alpha = self._get_alpha(L)
+
         def alibi_mod(score, b, h, q_idx, kv_idx):
             scale = torch.exp2(-((h + 1) * 8.0 / H))
-            in_bias = torch.abs(kv_idx - q_idx) * scale
+
+            in_bias = torch.abs(kv_idx - q_idx)
 
             # Add bias for epsilon tokens (if any)
-            out_bias = out_bias_base[b, q_idx] + out_bias_base[b, kv_idx]
+            out_bias = (out_bias_base[b, q_idx] + out_bias_base[b, kv_idx]).bool()  # (B, L)
 
-            bias = in_bias + self.alpha * out_bias
+            bias = scale * (in_bias + out_bias * self.alpha)
 
             return score - bias
 
         with torch.amp.autocast("cuda", dtype=self.autocast_dtype):
-            out = self.compiled_fn(q, k, v, score_mod=alibi_mod)
+            out = self.compiled_fn(q, k, v, alibi_mod)
+
+        return out
+
+    def _get_alibias_cached(self, B, L, device):
+        # cached bc inefficient to compute every time
+        if not hasattr(self, "alibias"):
+            self.alibias = torch.zeros(B, L, L, device=device)
+            for i in range(L):
+                for j in range(L):
+                    self.alibias[:, i, j] = abs(i - j)
+        return self.alibias
+
+    def naive(self, qkv: torch.Tensor, indices: torch.Tensor) -> torch.Tensor:
+        B, H, THREE, L, D = qkv.shape
+        assert THREE == 3, "qkv must have 3 dimensions"  # noqa: PLR2004
+        assert self.num_heads == H, "num_heads must match H"
+
+        if self.alpha is None:
+            self.alpha = self._get_alpha(L)
+
+        in_bias_base = indices == self.epsilon_idx  # (B, L)
+
+        q, k, v = qkv.unbind(dim=-3)  # (B, H, L, D)
+
+        dots = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(D)  # (B, H, L, L)
+
+        in_bias = (in_bias_base.unsqueeze(1) + in_bias_base.unsqueeze(2)).bool()  # (B, L, L)
+
+        out_bias = self._get_alibias_cached(B, L, device=q.device)
+
+        bias = out_bias + in_bias * self.alpha  # (B, L, L)
+
+        bias_scale = torch.exp2(-torch.arange(1, H + 1, device=q.device) * 8.0 / H)  # (H,)
+
+        bias = bias.unsqueeze(1).expand(-1, H, -1, -1) * bias_scale.unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
+
+        dots = dots - bias
+
+        attn = F.softmax(dots, dim=-1)
+
+        out = torch.matmul(attn, v)  # (B, H, L, D)
+
+        return out, attn
+
+    def naive_reshaped(self, qkv: torch.Tensor, indices: torch.Tensor) -> torch.Tensor:
+        B, L, THREE, H, D = qkv.shape
+        assert THREE == 3, "qkv must have 3 dimensions"  # noqa: PLR2004
+
+        qkv = rearrange(qkv, "b l t h d -> b h t l d", h=H)
+
+        # out, _ = self.naive(qkv, indices)
+        out = self.forward(qkv, indices)
+
+        out = rearrange(out, "b h l d -> b l (h d)")
 
         return out
 
@@ -301,7 +368,7 @@ def test_ape(sweep=False):
     generate_gif(base_frequencies)
 
 
-def test_alibi():
+def benchmark_attn():
     B = 8
     L = 256
     H = 8
@@ -353,6 +420,61 @@ def test_alibi():
         )
 
         out.sum().backward()
+
+
+def test_alibi():
+    import matplotlib.pyplot as plt
+
+    B = 4
+    L = 128
+    H = 12
+    dim = 64 * H
+
+    device = torch.device("cuda")
+    acast_dtype = torch.bfloat16
+
+    alibi = ALiBiPE(num_heads=H, epsilon_idx=2, autocast_dtype=acast_dtype)
+    indices = torch.ones(B, L, device=device)
+
+    q = torch.randn(B, H, L, dim // H, device=device) * 2
+    k = torch.randn(B, H, L, dim // H, device=device) * 2
+    v = torch.randn(B, H, L, dim // H, device=device) * 2
+
+    qkv = torch.stack([q, k, v], dim=2)  # (B, H, 3, L, dim // H)
+
+    # indices.index_fill_(1, torch.randint(0, L, (int(0.30 * L),), device=device), 2)
+
+    out_baseline, attn = alibi.naive(qkv, indices)
+
+    out_flex = alibi.forward(qkv, indices)
+
+    print(torch.allclose(out_baseline, out_flex))
+
+    print(torch.norm(out_baseline - out_flex))
+
+    attn = torch.clip(attn, 0, 1e-5)
+
+    plt.imshow(attn[0, 0].cpu().detach().numpy(), aspect="auto", cmap="jet")
+    plt.colorbar()
+    plt.title("DD AliBi (rescaled)")
+    plt.savefig("attn.png")
+    plt.close()
+
+    fig, axs = plt.subplots(H // 4, 4, figsize=(15, 15))
+    axs = axs.flatten()
+    h_dim = dim // H
+
+    out = rearrange(out_flex, "b h l d -> b l (h d)")
+    out = out[0].cpu().detach().numpy()
+
+    for i in range(H):
+        im = axs[i].imshow(out[:, i * h_dim : (i + 1) * h_dim], aspect="auto")
+        axs[i].set_title(f"Head {i}")
+        plt.colorbar(im, ax=axs[i])
+
+    plt.savefig("alibi_output_subplots.png")
+
+    plt.close()
 
 
 if __name__ == "__main__":

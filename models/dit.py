@@ -293,7 +293,15 @@ class ConditionEmbedder(nn.Module):
 
 
 class DDiTBlock(nn.Module):
-    def __init__(self, dim, n_heads, cond_dim, mlp_ratio=4, dropout=0.1):
+    def __init__(  # noqa: PLR0913
+        self,
+        dim,
+        n_heads,
+        cond_dim,
+        mlp_ratio=4,
+        dropout=0.1,
+        epsilon_index=None,
+    ):
         super().__init__()
         self.n_heads = n_heads
 
@@ -311,6 +319,12 @@ class DDiTBlock(nn.Module):
         self.dropout2 = nn.Dropout(dropout)
         self.dropout = dropout
 
+        self.alibi_block = ALiBiPE(
+            num_heads=n_heads,
+            epsilon_idx=epsilon_index,
+            autocast_dtype=torch.bfloat16,
+        )
+
         self.adaLN_modulation = nn.Linear(cond_dim, 6 * dim, bias=True)
         self.adaLN_modulation.weight.data.zero_()
         self.adaLN_modulation.bias.data.zero_()
@@ -321,8 +335,8 @@ class DDiTBlock(nn.Module):
         else:
             return bias_dropout_add_scale_fused_inference
 
-    def forward(self, x, rotary_cos_sin, c, seqlens=None):
-        batch_size, seq_len = x.shape[0], x.shape[1]
+    def forward(self, x, rotary_cos_sin, c, seqlens=None, indices=None):
+        # batch_size, seq_len = x.shape[0], x.shape[1]
 
         bias_dropout_scale_fn = self._get_bias_dropout_scale()
 
@@ -336,19 +350,21 @@ class DDiTBlock(nn.Module):
 
         qkv = self.attn_qkv(x)
 
-        """qkv = rearrange(qkv, "b s (three h d) -> b s three h d", three=3, h=self.n_heads)
+        qkv = rearrange(qkv, "b s (three h d) -> b s three h d", three=3, h=self.n_heads)
 
-        qkv_rope, qkv_nope = torch.chunk(qkv, 2, dim=3)
+        # qkv_rope, qkv_nope = torch.chunk(qkv, 2, dim=3)
 
         with torch.amp.autocast(device_type="cuda", enabled=False):
             cos, sin = rotary_cos_sin
-            qkv_rope = apply_rotary_pos_emb(qkv_rope, cos.to(qkv_rope.dtype), sin.to(qkv_rope.dtype))
+            # qkv_rope = apply_rotary_pos_emb(qkv_rope, cos.to(qkv_rope.dtype), sin.to(qkv_rope.dtype))
 
-        qkv = torch.cat([qkv_rope, qkv_nope], dim=3)
-        qkv
+            qkv = apply_rotary_pos_emb(qkv, cos.to(qkv.dtype), sin.to(qkv.dtype))
 
-        qkv = rearrange(qkv, "b s ... -> (b s) ...")"""
+        # qkv = torch.cat([qkv_rope, qkv_nope], dim=3)
 
+        # qkv = rearrange(qkv, "b s ... -> (b s) ...")
+
+        """
         # for no-rope
         qkv = rearrange(qkv, "b s (three h d) -> (b s) three h d", h=self.n_heads, three=3)
 
@@ -356,6 +372,7 @@ class DDiTBlock(nn.Module):
             cu_seqlens = torch.arange(0, (batch_size + 1) * seq_len, step=seq_len, dtype=torch.int32, device=qkv.device)
         else:
             cu_seqlens = seqlens.cumsum(-1)
+        """
 
         # qkv : (total, 3, nheads, headdim)
         # slopes_rope = [0 for _ in range(qkv.shape[-2] // 2)]  # no alibi for roped heads
@@ -364,8 +381,8 @@ class DDiTBlock(nn.Module):
         # slopes = slopes_rope + slopes_nope
         # slopes = torch.tensor(slopes, device=qkv.device)
 
+        """
         slopes = get_slopes(n=qkv.shape[-2], return_tensor=True).to(qkv.device)
-
         x = flash_attn.flash_attn_varlen_qkvpacked_func(
             qkv,
             cu_seqlens,
@@ -374,8 +391,24 @@ class DDiTBlock(nn.Module):
             alibi_slopes=slopes,
             causal=False,
         )
+        """
+        ############################################
 
-        x = rearrange(x, "(b s) h d -> b s (h d)", b=batch_size)
+        # Shape (batch_size, seq_len, 3, n_heads, head_dim)
+
+        qkv = rearrange(
+            qkv,
+            "b s three h d -> b h three s d",
+            b=x.shape[0],
+            h=self.n_heads,
+            three=3,
+        )
+
+        x = self.alibi_block.forward(qkv, indices)
+
+        # x = rearrange(x, "(b s) h d -> b s (h d)", b=batch_size)
+
+        x = rearrange(x, "b h s d -> b s (h d)")
 
         x = bias_dropout_scale_fn(self.attn_out(x), None, gate_msa, x_skip, self.dropout)
 
@@ -427,12 +460,12 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
         self.vocab_embed = EmbeddingLayer(config.model.hidden_size, vocab_size)
         self.sigma_map = TimestepEmbedder(config.model.cond_dim)
 
-        self.ape = APE(
+        """self.ape = APE(
             config.model.hidden_size,
             default_seq_len=config.model.length,
             data_dependent=False,
             epsilon_idx=epsilon_index,
-        )
+        )"""
 
         # Does nothing if num_classes and/or label_dropout are not defined
         if hasattr(config.model, "conditional") and config.model.conditional and hasattr(config.model, "cond_method"):
@@ -468,7 +501,11 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
         for _ in range(config.model.n_blocks):
             blocks.append(
                 DDiTBlock(
-                    config.model.hidden_size, config.model.n_heads, config.model.cond_dim, dropout=config.model.dropout
+                    config.model.hidden_size,
+                    config.model.n_heads,
+                    config.model.cond_dim,
+                    dropout=config.model.dropout,
+                    epsilon_index=epsilon_index,
                 )
             )
         self.blocks = nn.ModuleList(blocks)
@@ -485,7 +522,7 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
     def forward(self, indices, sigma, labels=None):
         x = self.vocab_embed(indices)
 
-        x = self.ape(x, indices)
+        # x = self.ape(x, indices)
 
         if labels is None:
             c = F.silu(self.sigma_map(sigma))
@@ -496,7 +533,7 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
 
         with torch.cuda.amp.autocast(dtype=torch.bfloat16):
             for i in range(len(self.blocks)):
-                x = self.blocks[i](x, rotary_cos_sin, c, seqlens=None)
+                x = self.blocks[i](x, rotary_cos_sin, c, seqlens=None, indices=indices)
             x = self.output_layer(x, c)
 
         return x
