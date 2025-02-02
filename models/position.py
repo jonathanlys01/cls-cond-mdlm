@@ -89,7 +89,7 @@ class ALiBiPE(torch.nn.Module):
         self.autocast_dtype = autocast_dtype
 
         self.compiled_fn = torch.compile(
-            flex_attention,
+            flex_attention, dynamic=False
         )  # fullgraph=True, mode="max-autotune", dynamic=False)
 
     def _get_alpha(self, L):
