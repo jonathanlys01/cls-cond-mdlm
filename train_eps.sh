@@ -39,5 +39,5 @@ $PRE python main.py \
   model.proba_method="bucket" \
   model.length=256 \
   trainer.max_epochs=2 \
-  wandb.name=rope-and-dd-alibi-good-scaling-epsilon-lm1b
+  wandb.name=rope-and-dd-alibi-inf-bias-epsilon-lm1b
   # wandb=False

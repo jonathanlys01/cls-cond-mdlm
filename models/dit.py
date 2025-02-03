@@ -323,6 +323,7 @@ class DDiTBlock(nn.Module):
             num_heads=n_heads,
             epsilon_idx=epsilon_index,
             autocast_dtype=torch.bfloat16,
+            alpha=float(1e9),  # equivalent to true masking
         )
 
         self.adaLN_modulation = nn.Linear(cond_dim, 6 * dim, bias=True)
