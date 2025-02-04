@@ -322,6 +322,7 @@ class DDiTBlock(nn.Module):
         self.alibi_block = ALiBiPE(
             num_heads=n_heads,
             epsilon_idx=epsilon_index,
+            in_bias=False,
             autocast_dtype=torch.bfloat16,
             alpha=float(1e9),  # equivalent to true masking
         )

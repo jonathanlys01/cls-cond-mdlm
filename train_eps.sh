@@ -19,6 +19,7 @@
 if ! [ -x "$(command -v sbatch)" ]; then
   echo "sbatch is not installed. Running script locally."
   PRE=""
+  BS=8
 else
   echo "Job started at $(date)"
   export WANDB_MODE=offline
@@ -26,6 +27,7 @@ else
   module purge
   module load arch/a100
   source $WORK/projects/cls-cond-mdlm/.venv/bin/activate
+  BS=64
 fi
 
 $PRE python main.py \
@@ -34,10 +36,12 @@ $PRE python main.py \
   parameterization=subs \
   eval.compute_generative_perplexity=True \
   sampling.steps=10_000 \
-  loader.global_batch_size=64 \
-  loader.eval_batch_size=64 \
+  loader.global_batch_size=$BS \
+  loader.eval_batch_size=$BS \
   model.proba_method="bucket" \
   model.length=256 \
   trainer.max_epochs=2 \
-  wandb.name=rope-and-dd-alibi-inf-bias-epsilon-lm1b
-  # wandb=False
+  wandb=False
+  # wandb.name=rope-true-mask-epsilon-lm1b
+
+# SCRATCH=$(pwd)/db/data ./train_eps.sh 

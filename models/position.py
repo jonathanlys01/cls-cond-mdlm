@@ -79,6 +79,7 @@ class ALiBiPE(torch.nn.Module):
         self,
         num_heads: int,
         epsilon_idx: int,
+        in_bias: bool = True, # default to all bias
         alpha: float = None,
         autocast_dtype=torch.bfloat16,
     ):
@@ -91,6 +92,8 @@ class ALiBiPE(torch.nn.Module):
         self.compiled_fn = torch.compile(
             flex_attention, dynamic=False
         )  # fullgraph=True, mode="max-autotune", dynamic=False)
+        
+        self.forward = self.forward_all if in_bias else self.forward_outer
 
     def _get_alpha(self, L):
         """
@@ -99,7 +102,7 @@ class ALiBiPE(torch.nn.Module):
         """
         return (L * L - 1) / 3
 
-    def forward(self, qkv: torch.Tensor, indices: torch.Tensor) -> torch.Tensor:
+    def forward_all(self, qkv: torch.Tensor, indices: torch.Tensor) -> torch.Tensor:
         B, H, THREE, L, D = qkv.shape
         assert THREE == 3, "qkv must have 3 dimensions"  # noqa: PLR2004
         assert self.num_heads == H, "num_heads must match H"
@@ -127,6 +130,35 @@ class ALiBiPE(torch.nn.Module):
             out = self.compiled_fn(q, k, v, alibi_mod)
 
         return out
+    
+    def forward_outer(self, qkv: torch.Tensor, indices: torch.Tensor) -> torch.Tensor:
+        B, H, THREE, L, D = qkv.shape
+        assert THREE == 3, "qkv must have 3 dimensions"  # noqa: PLR2004
+        assert self.num_heads == H, "num_heads must match H"
+        
+        q, k, v = qkv.unbind(dim=-3)
+
+        out_bias_base = indices == self.epsilon_idx  # (B, L)
+
+        if self.alpha is None:
+            self.alpha = self._get_alpha(L)
+
+        def alibi_mod_no_inner(score, b, h, q_idx, kv_idx):
+            scale = torch.exp2(-((h + 1) * 8.0 / H))
+
+            # Add bias for epsilon tokens (if any)
+            out_bias = (out_bias_base[b, q_idx] + out_bias_base[b, kv_idx]).bool()  # (B, L)
+
+            bias = scale * out_bias * self.alpha
+
+            return score - bias
+
+        with torch.amp.autocast("cuda", dtype=self.autocast_dtype):
+            out = self.compiled_fn(q, k, v, alibi_mod_no_inner)
+
+        return out
+        
+        
 
     def _get_alibias_cached(self, B, L, device):
         # cached bc inefficient to compute every time
