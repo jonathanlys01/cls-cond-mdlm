@@ -16,11 +16,11 @@ from models.position import APE, ALiBiPE, get_slopes  # noqa: F401
 
 N_BUCKETS = 64
 
-# Flags required to enable jit fusion kernels
-torch._C._jit_set_profiling_mode(False)
-torch._C._jit_set_profiling_executor(False)
-torch._C._jit_override_can_fuse_on_cpu(True)
-torch._C._jit_override_can_fuse_on_gpu(True)
+# # Flags required to enable jit fusion kernels
+# torch._C._jit_set_profiling_mode(False)
+# torch._C._jit_set_profiling_executor(False)
+# torch._C._jit_override_can_fuse_on_cpu(True)
+# torch._C._jit_override_can_fuse_on_gpu(True)
 
 
 def bias_dropout_add_scale(  # noqa: PLR0913
@@ -298,9 +298,9 @@ class DDiTBlock(nn.Module):
         dim,
         n_heads,
         cond_dim,
+        alibi_block: ALiBiPE,
         mlp_ratio=4,
         dropout=0.1,
-        epsilon_index=None,
     ):
         super().__init__()
         self.n_heads = n_heads
@@ -319,13 +319,7 @@ class DDiTBlock(nn.Module):
         self.dropout2 = nn.Dropout(dropout)
         self.dropout = dropout
 
-        self.alibi_block = ALiBiPE(
-            num_heads=n_heads,
-            epsilon_idx=epsilon_index,
-            in_bias=False,
-            autocast_dtype=torch.bfloat16,
-            alpha=float(1e9),  # equivalent to true masking
-        )
+        self.alibi_block = alibi_block
 
         self.adaLN_modulation = nn.Linear(cond_dim, 6 * dim, bias=True)
         self.adaLN_modulation.weight.data.zero_()
@@ -354,49 +348,9 @@ class DDiTBlock(nn.Module):
 
         qkv = rearrange(qkv, "b s (three h d) -> b s three h d", three=3, h=self.n_heads)
 
-        # qkv_rope, qkv_nope = torch.chunk(qkv, 2, dim=3)
-
         with torch.amp.autocast(device_type="cuda", enabled=False):
             cos, sin = rotary_cos_sin
-            # qkv_rope = apply_rotary_pos_emb(qkv_rope, cos.to(qkv_rope.dtype), sin.to(qkv_rope.dtype))
-
             qkv = apply_rotary_pos_emb(qkv, cos.to(qkv.dtype), sin.to(qkv.dtype))
-
-        # qkv = torch.cat([qkv_rope, qkv_nope], dim=3)
-
-        # qkv = rearrange(qkv, "b s ... -> (b s) ...")
-
-        """
-        # for no-rope
-        qkv = rearrange(qkv, "b s (three h d) -> (b s) three h d", h=self.n_heads, three=3)
-
-        if seqlens is None:
-            cu_seqlens = torch.arange(0, (batch_size + 1) * seq_len, step=seq_len, dtype=torch.int32, device=qkv.device)
-        else:
-            cu_seqlens = seqlens.cumsum(-1)
-        """
-
-        # qkv : (total, 3, nheads, headdim)
-        # slopes_rope = [0 for _ in range(qkv.shape[-2] // 2)]  # no alibi for roped heads
-        # slopes_nope = get_slopes(n=qkv.shape[-2] // 2, return_tensor=False)
-
-        # slopes = slopes_rope + slopes_nope
-        # slopes = torch.tensor(slopes, device=qkv.device)
-
-        """
-        slopes = get_slopes(n=qkv.shape[-2], return_tensor=True).to(qkv.device)
-        x = flash_attn.flash_attn_varlen_qkvpacked_func(
-            qkv,
-            cu_seqlens,
-            seq_len,
-            0.0,
-            alibi_slopes=slopes,
-            causal=False,
-        )
-        """
-        ############################################
-
-        # Shape (batch_size, seq_len, 3, n_heads, head_dim)
 
         qkv = rearrange(
             qkv,
@@ -406,9 +360,8 @@ class DDiTBlock(nn.Module):
             three=3,
         )
 
-        x = self.alibi_block.forward(qkv, indices)
-
-        # x = rearrange(x, "(b s) h d -> b s (h d)", b=batch_size)
+        with torch.amp.autocast(device_type="cuda", enabled=False):
+            x = self.alibi_block.forward(qkv, indices)
 
         x = rearrange(x, "b h s d -> b s (h d)")
 
@@ -416,7 +369,11 @@ class DDiTBlock(nn.Module):
 
         # mlp operation
         x = bias_dropout_scale_fn(
-            self.mlp(modulate_fused(self.norm2(x), shift_mlp, scale_mlp)), None, gate_mlp, x, self.dropout
+            self.mlp(modulate_fused(self.norm2(x), shift_mlp, scale_mlp)),
+            None,
+            gate_mlp,
+            x,
+            self.dropout,
         )
         return x
 
@@ -499,21 +456,30 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
 
         self.rotary_emb = Rotary(config.model.hidden_size // config.model.n_heads)
 
+        self.alibi_block = ALiBiPE(
+            num_heads=self.config.model.n_heads,
+            epsilon_idx=epsilon_index,
+            in_bias=False,
+            autocast_dtype=torch.bfloat16,
+            alpha=self.config.model.bias_scale,
+        )
+
         blocks = []
         for _ in range(config.model.n_blocks):
             blocks.append(
                 DDiTBlock(
-                    config.model.hidden_size,
-                    config.model.n_heads,
-                    config.model.cond_dim,
+                    dim=config.model.hidden_size,
+                    n_heads=config.model.n_heads,
+                    cond_dim=config.model.cond_dim,
+                    alibi_block=self.alibi_block,  # avoid creating multiple instances
                     dropout=config.model.dropout,
-                    epsilon_index=epsilon_index,
                 )
             )
         self.blocks = nn.ModuleList(blocks)
 
         self.output_layer = DDitFinalLayer(config.model.hidden_size, vocab_size, config.model.cond_dim)
         self.scale_by_sigma = config.model.scale_by_sigma
+        self.epsilon_index = epsilon_index
 
     def _get_bias_dropout_scale(self):
         if self.training:
@@ -533,9 +499,11 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
 
         rotary_cos_sin = self.rotary_emb(x)
 
-        with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+        indices_ = indices == self.epsilon_index
+
+        with torch.autocast("cuda", dtype=torch.bfloat16):
             for i in range(len(self.blocks)):
-                x = self.blocks[i](x, rotary_cos_sin, c, seqlens=None, indices=indices)
+                x = self.blocks[i](x, rotary_cos_sin, c, seqlens=None, indices=indices_)
             x = self.output_layer(x, c)
 
         return x

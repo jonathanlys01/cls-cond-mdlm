@@ -41,7 +41,8 @@ $PRE python main.py \
   model.proba_method="bucket" \
   model.length=256 \
   trainer.max_epochs=2 \
-  wandb.name=rope-true-mask-epsilon-lm1b
+  model.bias_scale=1e10 \
+  wandb.name="rope-true-mask-epsilon-lm1b"
   # wandb=False
 
 # SCRATCH=$(pwd)/db/data ./train_eps.sh 

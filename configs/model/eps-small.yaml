@@ -12,3 +12,4 @@ tie_word_embeddings: False
 conditional: True
 cond_method: "proba" # probability-based conditioning
 proba_method: "bucket" # bucket + embed 
+bias_scale: 0.0
