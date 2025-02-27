@@ -459,7 +459,6 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
         self.alibi_block = ALiBiPE(
             num_heads=self.config.model.n_heads,
             epsilon_idx=epsilon_index,
-            in_bias=False,
             autocast_dtype=torch.bfloat16,
             alpha=self.config.model.bias_scale,
         )
