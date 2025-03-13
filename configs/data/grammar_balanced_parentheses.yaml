@@ -1,0 +1,7 @@
+train: grammar_balanced_parentheses
+valid: grammar_balanced_parentheses
+tokenizer_name_or_path: grammar_balanced_parentheses
+max_eps_rate: 0.3
+cache_dir: ${scratch:}/data/grammar
+wrap: True # useless
+streaming: True # useless

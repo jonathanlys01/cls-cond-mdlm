@@ -1,0 +1,7 @@
+train: grammar_balanced_ab
+valid: grammar_balanced_ab
+tokenizer_name_or_path: grammar_balanced_ab
+max_eps_rate: 0.3
+cache_dir: ${scratch:}/data/grammar
+wrap: True # useless
+streaming: True # useless

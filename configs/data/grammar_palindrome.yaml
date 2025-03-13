@@ -1,0 +1,7 @@
+train: grammar_palindrome
+valid: grammar_palindrome
+tokenizer_name_or_path: grammar_palindrome
+max_eps_rate: 0.3
+cache_dir: ${scratch:}/data/grammar
+wrap: True # useless
+streaming: True # useless

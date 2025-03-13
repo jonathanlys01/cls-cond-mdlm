@@ -20,6 +20,7 @@ import utils
 from cls_cond.amazon_rev import get_amazon_polarity
 from cls_cond.arxiv_abs import get_arxiv_abs
 from cls_cond.arxiv_cls import get_arxiv_cls_categories
+from epsilon.grammar import get_grammar_dataset, get_grammar_tokenizer
 from epsilon.lm1b_dataset import get_epsilon_lm1b
 from epsilon.lm1b_dataset import get_tokenizer as get_epsilon_tokenizer
 from epsilon.text_dataset import load_text8_dataset
@@ -299,6 +300,7 @@ def get_dataset(
     wrap,
     mode,
     cache_dir,
+    config,
     block_size=1024,
     num_proc=len(os.sched_getaffinity(0)),
     streaming=False,
@@ -313,6 +315,14 @@ def get_dataset(
         return load_text8_dataset(mode, cache_dir=cache_dir)
     elif dataset_name == "epsilon-lm1b":
         return get_epsilon_lm1b(mode, cache_dir=cache_dir)
+    elif dataset_name.startswith("grammar"):
+        return get_grammar_dataset(
+            dataset_name,
+            mode=mode,
+            cache_dir=cache_dir,
+            block_size=block_size,
+            max_eps_rate=config.data.max_eps_rate,
+        )
 
     if wrap:
         filename = f"{dataset_name}_{mode}_bs{block_size}_wrapped.dat"
@@ -463,6 +473,11 @@ def get_tokenizer(config):
         print("Using special tokenizer for epsilon datasets.")
         # Special tokenizer with epsilon tokens
         tokenizer = get_epsilon_tokenizer()
+    elif config.data.tokenizer_name_or_path.startswith("grammar"):
+        print("Using special tokenizer for grammar datasets.")
+        name = config.data.tokenizer_name_or_path
+        tokenizer = get_grammar_tokenizer(name)
+
     else:
         tokenizer = transformers.AutoTokenizer.from_pretrained(config.data.tokenizer_name_or_path)
 
@@ -476,11 +491,11 @@ def get_tokenizer(config):
     #  [BOS] sent2-fragment [EOS] sent3 [EOS]
     if tokenizer.bos_token is None:
         if tokenizer.cls_token is None:
-            raise AttributeError("Tokenizer must have a bos_token or " f"cls_token: {tokenizer}")
+            raise AttributeError(f"Tokenizer must have a bos_token or cls_token: {tokenizer}")
         tokenizer.bos_token = tokenizer.cls_token
     if tokenizer.eos_token is None:
         if tokenizer.sep_token is None:
-            raise AttributeError("Tokenizer must have a eos_token " f"or sep_token: {tokenizer}")
+            raise AttributeError(f"Tokenizer must have a eos_token or sep_token: {tokenizer}")
         tokenizer.eos_token = tokenizer.sep_token
     if tokenizer.pad_token is None:
         tokenizer.add_special_tokens({"pad_token": "[PAD]"})
@@ -500,7 +515,7 @@ def get_dataloaders(config, tokenizer, skip_train=False, skip_valid=False, valid
             f"{config.trainer.accumulate_grad_batches}."
         )
     if config.loader.eval_global_batch_size % num_gpus != 0:
-        raise ValueError(f"Eval Batch Size for {config.eval.batch_size} " f"not divisible by {num_gpus}.")
+        raise ValueError(f"Eval Batch Size for {config.eval.batch_size} not divisible by {num_gpus}.")
     if skip_train:
         train_set = None
     else:
@@ -511,6 +526,7 @@ def get_dataloaders(config, tokenizer, skip_train=False, skip_valid=False, valid
             wrap=config.data.wrap,
             cache_dir=config.data.cache_dir,
             block_size=config.model.length,
+            config=config,
         )
 
     if config.data.valid in ["text8", "lm1b", "ag_news"]:
@@ -528,6 +544,7 @@ def get_dataloaders(config, tokenizer, skip_train=False, skip_valid=False, valid
             cache_dir=config.data.cache_dir,
             block_size=config.model.length,
             streaming=False,
+            config=config,
         )
 
     if skip_train:

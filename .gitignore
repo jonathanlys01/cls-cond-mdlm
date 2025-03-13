@@ -18,3 +18,6 @@ db
 
 # Slurm logs
 slurm-logs
+
+.scripts
+._*

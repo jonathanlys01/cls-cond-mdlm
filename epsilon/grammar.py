@@ -1,0 +1,475 @@
+"""
+Grammar module for generating sequences that satisfy certain grammar rules
+"""
+
+import os
+import random
+from abc import ABC, abstractmethod
+from functools import lru_cache, partial
+from multiprocessing import Pool
+
+import pandas as pd
+import torch
+from datasets import Dataset
+from pandas import DataFrame
+from tqdm import tqdm
+from transformers import PreTrainedTokenizer
+
+from utils import get_logger
+
+
+logger = get_logger(__name__)
+
+
+# Adjust the number of workers to the number of available cores
+N_WORKERS = 8
+
+CARDINAL_MAP = {
+    "_balanced_parentheses": {"train": 500_000, "validation": 10_000},
+    "_parity": {"train": 100_000, "validation": 10_000},
+    "_alternating_ab": {"train": 100_000, "validation": 10_000},
+    "_balanced_ab": {"train": 200_000, "validation": 10_000},
+    "_palindrome": {"train": 200_000, "validation": 10_000},
+}
+
+
+############################################ Tokenizer ############################################
+
+OFFSET = 8  # offset for special tokens
+
+
+class CharTokenizer(PreTrainedTokenizer):
+    def __init__(  # noqa: PLR0913
+        self,
+        mapping: dict[str, int],
+        bos_token="[BOS]",
+        eos_token="[EOS]",
+        sep_token="[SEP]",
+        cls_token="[CLS]",
+        pad_token="[PAD]",
+        mask_token="[MASK]",
+        unk_token="[UNK]",
+        **kwargs,
+    ):
+        self._vocab_str_to_int = {
+            "[CLS]": 0,
+            "[SEP]": 1,
+            "[BOS]": 2,
+            "[EOS]": 3,
+            "[MASK]": 4,
+            "[PAD]": 5,
+            "[RESERVED]": 6,
+            "[UNK]": 7,
+            **mapping,
+        }
+        assert self._vocab_str_to_int["[EPS]"] == len(self._vocab_str_to_int) - 1, "EPS token must be last"
+        del self._vocab_str_to_int["[EPS]"]  # remove EPS token (will be added later)
+
+        self._vocab_int_to_str = {v: k for k, v in self._vocab_str_to_int.items()}
+        super().__init__(
+            bos_token=bos_token,
+            eos_token=eos_token,
+            sep_token=sep_token,
+            cls_token=cls_token,
+            pad_token=pad_token,
+            mask_token=mask_token,
+            unk_token=unk_token,
+            **kwargs,
+        )
+
+        self.add_special_tokens({"additional_special_tokens": ["[EPS]"]})
+
+    @property
+    def vocab_size(self) -> int:
+        return len(self._vocab_str_to_int)
+
+    def _tokenize(self, text: str, **kwargs) -> list[str]:
+        return list(text.lower())
+
+    def _convert_token_to_id(self, token: str) -> int:
+        return self._vocab_str_to_int.get(token, self._vocab_str_to_int["[UNK]"])
+
+    def _convert_id_to_token(self, index: int) -> str:
+        return self._vocab_int_to_str[index]
+
+    def convert_tokens_to_string(self, tokens):
+        return "".join(tokens)
+
+    def get_vocab(self) -> dict[str, int]:
+        return self._vocab_str_to_int
+
+
+############################################ Grammar ############################################
+
+
+class Grammar(ABC):
+    def __init__(self):
+        self.mapping = {}
+        self.rev_mapping = {}
+
+        # most datasets rely on a symetric behavior of tokens and are thus parity sensitive
+        self.parity_sensitive = True
+
+    def __post_init__(self):
+        self.mapping = {**self.mapping, "[EPS]": len(self.mapping)}
+        self.mapping = {k: v + OFFSET for k, v in self.mapping.items()}  # add offset for special tokens
+
+        self.rev_mapping = {v: k for k, v in self.mapping.items()}
+
+        self.tokenizer = CharTokenizer(self.mapping)
+
+    def decode(self, sequence: list[int], ignore_eps: bool = False) -> str:
+        if ignore_eps:
+            sequence = [i for i in sequence if i != self.mapping["[EPS]"]]
+        return "".join([self.rev_mapping[i] for i in sequence])
+
+    @abstractmethod
+    def _generate_str(self, seq_len: int) -> str:
+        """Generates a sequence of grammar symbols as a string"""
+        pass
+
+    @abstractmethod
+    def generate(self, seq_len: int) -> list[int]:
+        """Generates a sequence of integers that represents the grammar"""
+        pass
+
+    def remove_eps(self, sequence: list[int]) -> list[int]:
+        return [i for i in sequence if i != self.mapping["[EPS]"]]
+
+    @abstractmethod
+    def evaluate(self, sequence: list[int]) -> bool:
+        """Evaluates whether the sequence satisfies the grammar"""
+        pass
+
+
+############################################ Grammar Implementations ############################################
+
+
+class BalancedParentheses(Grammar):
+    """
+    Grammar for balanced parentheses
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.mapping = {"(": 0, ")": 1}
+        super().__post_init__()
+
+    def generate_recursive(self, n: int) -> list[int]:
+        if n == 0:
+            return ""
+        elif n == 1:
+            return "()"
+        else:
+            parts = []
+            remaining = n
+            while remaining > 0:
+                k = random.randint(1, remaining)
+                parts.append("(" + self.generate_recursive(k - 1) + ")")
+                remaining -= k
+            random.shuffle(parts)
+            return "".join(parts)
+
+    def _generate_str(self, seq_len: int) -> str:
+        return self.generate_recursive(seq_len // 2)
+
+    def generate(self, seq_len) -> list[int]:
+        seq = self._generate_str(seq_len)
+        return [self.mapping[c] for c in seq]
+
+    def evaluate(self, sequence: list[int]) -> bool:
+        sequence = self.remove_eps(sequence)
+        stack = []
+        for token in sequence:
+            if token == self.mapping["("]:
+                stack.append(token)
+            elif token == self.mapping[")"]:
+                if len(stack) == 0:
+                    return False
+                stack.pop()
+        return len(stack) == 0
+
+
+class Parity(Grammar):
+    """
+    Grammar for even number of As"
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.mapping = {"A": 0, "B": 1}
+        super().__post_init__()
+
+    def _generate_str(self, seq_len: int) -> str:
+        int_seq = self.generate(seq_len)
+        return "".join([self.rev_mapping[i] for i in int_seq])
+
+    def generate(self, seq_len: int) -> list[int]:
+        n_zeros = random.randint(0, seq_len // 2) * 2  # even number of zeros
+        n_ones = seq_len - n_zeros
+
+        seq = [self.mapping["A"]] * n_zeros + [self.mapping["B"]] * n_ones
+        random.shuffle(seq)
+        return seq
+
+    def evaluate(self, sequence: list[int]) -> bool:
+        sequence = self.remove_eps(sequence)
+        return sequence.count(self.mapping["A"]) % 2 == 0
+
+
+class AlternatingAB(Grammar):
+    """
+    Grammar for alternating AB"
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.mapping = {"A": 0, "B": 1}
+        self.parity_sensitive = False  # not parity sensitive
+        super().__post_init__()
+
+    def _generate_str(self, seq_len: int) -> str:
+        seq_int = self.generate(seq_len)
+        return "".join([self.rev_mapping[i] for i in seq_int])
+
+    @lru_cache(maxsize=None)  # elts in the cache: EPS_RATE * seq_len
+    def _cached_generate(self, seq_len: int) -> list[int]:
+        n = seq_len + 1
+        return [self.mapping["A"] if i % 2 == 0 else self.mapping["B"] for i in range(n)]  # [A, B, A, B, ...]
+
+    def generate(self, seq_len: int) -> list[int]:
+        seq = self._cached_generate(seq_len)
+
+        start = random.randint(0, 1)
+        return seq[start : start + seq_len]
+
+    def evaluate(self, sequence: list[int]) -> bool:
+        sequence = self.remove_eps(sequence)
+        return all(sequence[i] != sequence[i + 1] for i in range(len(sequence) - 1))
+
+
+class BalancedAB(Grammar):
+    """ "
+    Grammar for balanced AB"
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.mapping = {"A": 0, "B": 1}
+        super().__post_init__()
+
+    def _generate_str(self, seq_len: int) -> str:
+        seq_int = self.generate(seq_len)
+        return "".join([self.rev_mapping[i] for i in seq_int])
+
+    @lru_cache(maxsize=None)
+    def _cached_generate(self, seq_len: int) -> list[int]:
+        n = seq_len // 2
+        seq = [self.mapping["A"]] * n + [self.mapping["B"]] * n
+        return seq
+
+    def generate(self, seq_len: int) -> list[int]:
+        assert seq_len % 2 == 0, "Sequence length must be even"
+        seq = self._cached_generate(seq_len)
+        random.shuffle(seq)
+        return seq
+
+    def evaluate(self, sequence: list[int]) -> bool:
+        sequence = self.remove_eps(sequence)
+        return sequence.count(self.mapping["A"]) == len(sequence) // 2
+
+
+class Palindrome(Grammar):
+    """
+    Grammar for palindromes
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.letters = list("abcde")  # only 5 letters to reduce complexity
+        self.mapping = {char: i for i, char in enumerate(self.letters)}
+        super().__post_init__()
+
+    def _generate_str(self, seq_len: int) -> str:
+        seq = random.choices(self.letters, k=seq_len // 2)
+        return "".join(seq + seq[::-1])
+
+    def generate(self, seq_len: int) -> list[int]:
+        seq = self._generate_str(seq_len)
+        return [self.mapping[c] for c in seq]
+
+    def evaluate(self, sequence: list[int]) -> bool:
+        sequence = self.remove_eps(sequence)
+        assert len(sequence) % 2 == 0, "Resulting sequence must have even length"
+        return sequence[: len(sequence) // 2] == sequence[len(sequence) // 2 :][::-1]
+
+
+############################################ Dataset Generation ############################################
+
+
+def merge_eps_seq(
+    text_seq: list[int],
+    n_epsilon: int,
+    epsilon_idx: int,
+) -> tuple[list[int], float]:
+    """Inserts epsilon tokens at random positions in the sequence."""
+
+    N = len(text_seq) + n_epsilon
+
+    eps_indices = set(random.sample(range(N), n_epsilon))
+    new_seq = []
+    seq_iter = iter(text_seq)
+
+    for i in range(N):
+        new_seq.append(epsilon_idx if i in eps_indices else next(seq_iter))
+
+    return new_seq, n_epsilon / len(new_seq)
+
+
+def _generate_sample(i, grammar: Grammar, final_seq_len: int, max_epsilon: int) -> dict:
+    if max_epsilon == 0:
+        seq = grammar.generate(final_seq_len)
+        seq_eps, rate = seq, 0.0
+    else:
+        random.seed(i)  # map i to a seed for sequence "uniqueness"
+        if grammar.parity_sensitive:
+            n_epsilon = random.randint(0, max_epsilon // 2) * 2  # even number of epsilons
+        else:
+            n_epsilon = random.randint(0, max_epsilon)
+
+        seq = grammar.generate(final_seq_len - n_epsilon)
+        seq_eps, rate = merge_eps_seq(seq, n_epsilon, grammar.mapping["[EPS]"])
+
+    return {"input_ids": seq_eps, "label": rate, "attention_mask": 1}  # dummy attention mask
+
+
+def generate_dataset(grammar: Grammar, n_samples: int, seq_len: int, n_epsilon: int) -> DataFrame:
+    """
+    Generates a dataset of sequences that satisfy the grammar rules
+    """
+
+    print(
+        f"Generating {n_samples} samples of length {seq_len} with max {n_epsilon} \
+epsilon tokens with grammar {grammar.__class__.__name__}"
+    )
+
+    # Trick: we use the range(n_samples) to generate the seed for the random number generator
+    # However, this means that the val and train will have the same samples
+    # hotfix: shift the sequence by a large random number (fixed for each n_samples)
+
+    random.seed(n_samples)
+    offset = random.randint(10_000_000, 100_000_000)
+
+    gen_fn = partial(
+        _generate_sample,
+        grammar=grammar,
+        final_seq_len=seq_len,
+        max_epsilon=n_epsilon,
+    )
+
+    with Pool(N_WORKERS) as pool:
+        samples = list(tqdm(pool.imap(gen_fn, range(offset, offset + n_samples)), total=n_samples))
+
+    return DataFrame(samples)
+
+
+############################################ Dataset Loading ############################################
+
+
+def _transform(examples, block_size):
+    ids = []
+    labels = []
+
+    # examples is a dict with keys: input_ids, label, attention_mask (lists inside)
+
+    for i in range(len(examples["input_ids"])):
+        ids.append(examples["input_ids"][i])
+        labels.append(examples["label"][i])
+
+    return {
+        "input_ids": torch.tensor(ids).long(),
+        "label": torch.tensor(labels).float(),
+        "attention_mask": torch.ones(len(ids), block_size).long(),
+    }
+
+
+def get_grammar_dataset(name: str, block_size: int, mode: str, cache_dir: str, max_eps_rate: float) -> DataFrame:
+    assert 0 <= max_eps_rate <= 1, f"max_eps_rate must be in [0, 1], got {max_eps_rate}"
+
+    name = name.lstrip("grammar")
+
+    cls_map = {
+        "_balanced_parentheses": BalancedParentheses,
+        "_parity": Parity,
+        "_alternating_ab": AlternatingAB,
+        "_balanced_ab": BalancedAB,
+        "_palindrome": Palindrome,
+    }
+
+    grammar = cls_map[name]()
+
+    # if os.path.isfile(os.path.join(cache_dir, f"{name}_{mode}.parquet")):
+    if False:  # temp disable cache
+        dataset = pd.read_parquet(os.path.join(cache_dir, f"{name}_{mode}.parquet"))
+
+    else:
+        n_samples = CARDINAL_MAP[name][mode]
+        dataset = generate_dataset(grammar, n_samples, block_size, int(max_eps_rate * block_size))
+        os.makedirs(cache_dir, exist_ok=True)
+        dataset.to_parquet(os.path.join(cache_dir, f"{name}_{mode}.parquet"))
+
+    # log first example
+    logger.info(f"First example in {name}_{mode}.parquet:")
+    logger.info(dataset.iloc[0].to_dict())
+
+    dataset = Dataset.from_pandas(dataset)
+
+    dataset = dataset.with_transform(partial(_transform, block_size=block_size))
+
+    return dataset
+
+
+def get_grammar_tokenizer(name: str) -> CharTokenizer:
+    name = name.lstrip("grammar")
+    cls_map = {
+        "_balanced_parentheses": BalancedParentheses,
+        "_parity": Parity,
+        "_alternating_ab": AlternatingAB,
+        "_balanced_ab": BalancedAB,
+        "_palindrome": Palindrome,
+    }
+
+    grammar: Grammar = cls_map[name]()
+    return grammar.tokenizer
+
+
+############################################ Main ############################################
+
+
+def main():
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--grammar", "-g", type=str, default="balanced_parentheses")
+    args = parser.parse_args()
+
+    if args.grammar == "balanced_parentheses":
+        grammar = BalancedParentheses()
+    elif args.grammar == "parity":
+        grammar = Parity()
+    elif args.grammar == "alternating_ab":
+        grammar = AlternatingAB()
+    elif args.grammar == "balanced_ab":
+        grammar = BalancedAB()
+    elif args.grammar == "palindrome":
+        grammar = Palindrome()
+    else:
+        raise ValueError(f"Grammar {args.grammar} not implemented")
+
+    i = input("seq")
+
+    print(grammar.evaluate([grammar.mapping[c] for c in i]))
+
+
+if __name__ == "__main__":
+    main()

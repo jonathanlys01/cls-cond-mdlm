@@ -1,0 +1,7 @@
+train: grammar_parity
+valid: grammar_parity
+tokenizer_name_or_path: grammar_parity
+max_eps_rate: 0.3
+cache_dir: ${scratch:}/data/grammar
+wrap: True # useless
+streaming: True # useless
