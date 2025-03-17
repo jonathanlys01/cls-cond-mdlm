@@ -18,6 +18,7 @@ import dataloader
 import diffusion
 import utils
 from cls_cond.classification import SentimentClassifier
+from epsilon.gr_eval import grammar_eval
 
 
 omegaconf.OmegaConf.register_new_resolver("cwd", os.getcwd)
@@ -98,7 +99,8 @@ def generate_samples(config, logger, tokenizer):
     authorized_labels = config.sampling.authorized_labels
     logger.info("Generating samples.")
     model = _load_from_checkpoint(config=config, tokenizer=tokenizer)
-    model.gen_ppl_metric.reset()
+    if config.eval.compute_generative_perplexity:
+        model.gen_ppl_metric.reset()
     all_texts = []
     raw_texts = []
     all_labels = []
@@ -107,7 +109,7 @@ def generate_samples(config, logger, tokenizer):
         model.ema = None
     stride_length = config.sampling.stride_length
     num_strides = config.sampling.num_strides
-    for _ in range(config.sampling.num_sample_batches):
+    for _ in tqdm(range(config.sampling.num_sample_batches)):
         if config.sampling.semi_ar:
             _, intermediate_samples, _ = model.restore_model_and_semi_ar_sample(
                 stride_length=stride_length, num_strides=num_strides, dt=1 / config.sampling.steps
@@ -124,12 +126,13 @@ def generate_samples(config, logger, tokenizer):
             samples = model.restore_model_and_sample(num_steps=config.sampling.steps, labels=labels)
             text_samples = model.tokenizer.batch_decode(samples, skip_special_tokens=True)
             raw_samples = model.tokenizer.batch_decode(samples, skip_special_tokens=False)
-            model.compute_generative_perplexity(text_samples)
+            if config.eval.compute_generative_perplexity:
+                model.compute_generative_perplexity(text_samples)
             raw_texts.extend(raw_samples)
         all_texts.extend(text_samples)
         all_labels.extend(labels.tolist())
-    print("Text samples:", text_samples)
-    if not config.sampling.semi_ar:
+    print("Text samples (1 batch, first samples):", text_samples[:5])
+    if not config.sampling.semi_ar and config.eval.compute_generative_perplexity:
         print("Generative perplexity:", model.gen_ppl_metric.compute())
     return all_texts, all_labels, raw_texts
 
@@ -364,6 +367,10 @@ def main(config):
                     f"Raw text (with special tokens): {raw_text}\n\n"
                 )
                 fp.write(to_write)
+
+        if config.data.train.startswith("grammar"):
+            grammar_eval(gen_texts, config.data.train, config.data.max_eps_rate > 0)
+
     elif config.mode == "ppl_eval":
         _ppl_eval(config, logger, tokenizer)
     elif config.mode == "sweep":

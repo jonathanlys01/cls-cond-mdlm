@@ -5,6 +5,7 @@ Grammar module for generating sequences that satisfy certain grammar rules
 import os
 import random
 from abc import ABC, abstractmethod
+from collections import Counter
 from functools import lru_cache, partial
 from multiprocessing import Pool
 
@@ -84,7 +85,7 @@ class CharTokenizer(PreTrainedTokenizer):
         return len(self._vocab_str_to_int)
 
     def _tokenize(self, text: str, **kwargs) -> list[str]:
-        return list(text.lower())
+        return list(text)
 
     def _convert_token_to_id(self, token: str) -> int:
         return self._vocab_str_to_int.get(token, self._vocab_str_to_int["[UNK]"])
@@ -110,6 +111,9 @@ class Grammar(ABC):
         # most datasets rely on a symetric behavior of tokens and are thus parity sensitive
         self.parity_sensitive = True
 
+        # metrics
+        self.reset_metrics()
+
     def __post_init__(self):
         self.mapping = {**self.mapping, "[EPS]": len(self.mapping)}
         self.mapping = {k: v + OFFSET for k, v in self.mapping.items()}  # add offset for special tokens
@@ -120,8 +124,8 @@ class Grammar(ABC):
 
     def decode(self, sequence: list[int], ignore_eps: bool = False) -> str:
         if ignore_eps:
-            sequence = [i for i in sequence if i != self.mapping["[EPS]"]]
-        return "".join([self.rev_mapping[i] for i in sequence])
+            sequence = [i for i in sequence if self.tokenizer.convert_ids_to_tokens(i) != "[EPS]"]
+        return self.tokenizer.decode(sequence, skip_special_tokens=False)
 
     @abstractmethod
     def _generate_str(self, seq_len: int) -> str:
@@ -134,12 +138,25 @@ class Grammar(ABC):
         pass
 
     def remove_eps(self, sequence: list[int]) -> list[int]:
-        return [i for i in sequence if i != self.mapping["[EPS]"]]
+        return [i for i in sequence if self.tokenizer.convert_ids_to_tokens(i) != "[EPS]"]
 
     @abstractmethod
     def evaluate(self, sequence: list[int]) -> bool:
         """Evaluates whether the sequence satisfies the grammar"""
         pass
+
+    @abstractmethod
+    def add_eval(self, sequence: list[int]) -> None:
+        pass
+
+    def generate_metrics(self) -> Counter:
+        return self.eval_counter
+
+    def reset_metrics(self) -> None:
+        print(f"Resetting metrics for {self.__class__.__name__}")
+        self.eval_counter = Counter()
+        self.eval_counter["HIT"] = 0
+        self.eval_counter["MISS"] = 0
 
 
 ############################################ Grammar Implementations ############################################
@@ -189,6 +206,11 @@ class BalancedParentheses(Grammar):
                 stack.pop()
         return len(stack) == 0
 
+    def add_eval(self, sequence: list[int]) -> None:
+        pred = self.evaluate(sequence)
+        self.eval_counter["HIT" if pred else "MISS"] += 1
+        # format: {"HIT": 100, "MISS": 200}
+
 
 class Parity(Grammar):
     """
@@ -215,6 +237,12 @@ class Parity(Grammar):
     def evaluate(self, sequence: list[int]) -> bool:
         sequence = self.remove_eps(sequence)
         return sequence.count(self.mapping["A"]) % 2 == 0
+
+    def add_eval(self, sequence: list[int]) -> None:
+        count = sequence.count(self.mapping["A"])
+        self.eval_counter[count] += 1
+        self.eval_counter["HIT" if count % 2 == 0 else "MISS"] += 1
+        # format: {0: 100, 1: 200, 2: 300, "HIT": 400, "MISS": 500}
 
 
 class AlternatingAB(Grammar):
@@ -247,6 +275,15 @@ class AlternatingAB(Grammar):
         sequence = self.remove_eps(sequence)
         return all(sequence[i] != sequence[i + 1] for i in range(len(sequence) - 1))
 
+    def add_eval(self, sequence: list[int]) -> None:
+        pred = self.evaluate(sequence)
+        sequence = self.remove_eps(sequence)
+        start = self.tokenizer.convert_ids_to_tokens(sequence[0])
+
+        self.eval_counter["HIT" if pred else "MISS"] += 1
+        self.eval_counter[start] += 1
+        # format: {"HIT": 100, "MISS": 200, "A": 300, "B": 400}
+
 
 class BalancedAB(Grammar):
     """ "
@@ -278,6 +315,13 @@ class BalancedAB(Grammar):
         sequence = self.remove_eps(sequence)
         return sequence.count(self.mapping["A"]) == len(sequence) // 2
 
+    def add_eval(self, sequence: list[int]) -> None:
+        pred = self.evaluate(sequence)
+        count = sequence.count(self.mapping["A"])
+        self.eval_counter["HIT" if pred else "MISS"] += 1
+        self.eval_counter[str(count)] += 1
+        # format: {0: 100, 1: 200, 2: 300, "HIT": 400, "MISS": 500}
+
 
 class Palindrome(Grammar):
     """
@@ -300,8 +344,25 @@ class Palindrome(Grammar):
 
     def evaluate(self, sequence: list[int]) -> bool:
         sequence = self.remove_eps(sequence)
-        assert len(sequence) % 2 == 0, "Resulting sequence must have even length"
+        if len(sequence) % 2 != 0:
+            return False
         return sequence[: len(sequence) // 2] == sequence[len(sequence) // 2 :][::-1]
+
+    def _fine_grained_eval(self, sequence: list[int]) -> float:
+        sequence = self.remove_eps(sequence)
+        if len(sequence) % 2 == 0:
+            # even number of letters
+            first_half = sequence[: len(sequence) // 2]
+            second_half = sequence[len(sequence) // 2 :]
+            return sum([1 for i, j in zip(first_half, second_half) if i == j]) / len(first_half)
+        else:
+            return -1
+
+    def add_eval(self, sequence: list[int]) -> None:
+        pred = self.evaluate(sequence)
+        self.eval_counter["HIT" if pred else "MISS"] += 1
+        self.eval_counter[str(self._fine_grained_eval(sequence))] += 1
+        # format: {"HIT": 100, "MISS": 200}
 
 
 ############################################ Dataset Generation ############################################
@@ -393,20 +454,21 @@ def _transform(examples, block_size):
     }
 
 
+CLS_MAP = {
+    "balanced_parentheses": BalancedParentheses,
+    "parity": Parity,
+    "alternating_ab": AlternatingAB,
+    "balanced_ab": BalancedAB,
+    "palindrome": Palindrome,
+}
+
+
 def get_grammar_dataset(name: str, block_size: int, mode: str, cache_dir: str, max_eps_rate: float) -> DataFrame:
     assert 0 <= max_eps_rate <= 1, f"max_eps_rate must be in [0, 1], got {max_eps_rate}"
 
-    name = name.lstrip("grammar")
+    name = name.removeprefix("grammar_")
 
-    cls_map = {
-        "_balanced_parentheses": BalancedParentheses,
-        "_parity": Parity,
-        "_alternating_ab": AlternatingAB,
-        "_balanced_ab": BalancedAB,
-        "_palindrome": Palindrome,
-    }
-
-    grammar = cls_map[name]()
+    grammar = CLS_MAP[name]()
 
     # if os.path.isfile(os.path.join(cache_dir, f"{name}_{mode}.parquet")):
     if False:  # temp disable cache
@@ -430,16 +492,9 @@ def get_grammar_dataset(name: str, block_size: int, mode: str, cache_dir: str, m
 
 
 def get_grammar_tokenizer(name: str) -> CharTokenizer:
-    name = name.lstrip("grammar")
-    cls_map = {
-        "_balanced_parentheses": BalancedParentheses,
-        "_parity": Parity,
-        "_alternating_ab": AlternatingAB,
-        "_balanced_ab": BalancedAB,
-        "_palindrome": Palindrome,
-    }
+    name = name.removeprefix("grammar_")
 
-    grammar: Grammar = cls_map[name]()
+    grammar: Grammar = CLS_MAP[name]()
     return grammar.tokenizer
 
 
