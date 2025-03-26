@@ -10,7 +10,9 @@ import matplotlib.pyplot as plt
 from epsilon.grammar import CLS_MAP, Grammar
 
 
-def _generate_plot(counter: Counter, title: str, grammar_name: str) -> None:
+def _generate_plot(counter: Counter, title: str, grammar_name: str) -> float:
+    # returns accuracy
+
     if len(counter) == 2:  # noqa: PLR2004
         print(counter)
 
@@ -21,10 +23,10 @@ def _generate_plot(counter: Counter, title: str, grammar_name: str) -> None:
         plt.close()
 
     else:
-        accuracy = counter["HIT"] / (counter["HIT"] + counter["MISS"])
+        acc = counter["HIT"] / (counter["HIT"] + counter["MISS"])
         plt.subplot(1, 2, 1)
         plt.bar(["HIT", "MISS"], [counter["HIT"], counter["MISS"]])
-        plt.title(f"Accuracy: {accuracy:.4f}")
+        plt.title(f"Accuracy: {acc:.4f}")
 
         other = {k: v for k, v in counter.items() if k not in ["HIT", "MISS"]}
 
@@ -65,6 +67,8 @@ def _generate_plot(counter: Counter, title: str, grammar_name: str) -> None:
         plt.savefig(f"{grammar_name}.png")
         plt.close()
 
+    return acc
+
 
 def _gen_stats(counter: Counter) -> dict:
     stats = {}
@@ -73,6 +77,15 @@ def _gen_stats(counter: Counter) -> dict:
     stats["ACCURACY"] = counter["HIT"] / (counter["HIT"] + counter["MISS"])
     stats["TOTAL"] = sum(counter.values())
     return stats
+
+
+def count_unique(seqs: list[str]) -> int:
+    return len(set(seqs))
+
+
+def _dump_count(title, count: int, acc: float) -> None:
+    with open(f"{title}.txt", "w") as f:
+        f.write(f"Unique count: {count:,}\n accuracy: {acc:.4f}\n")
 
 
 def grammar_eval(
@@ -94,6 +107,7 @@ def grammar_eval(
     name = data_train_name.removeprefix("grammar_")
     grammar: Grammar = CLS_MAP[name]()
 
+    count = count_unique(sequences)
     sequences_ = [grammar.tokenizer.encode(seq) for seq in sequences]
 
     grammar.reset_metrics()
@@ -108,8 +122,9 @@ def grammar_eval(
     # Generate plot
     now = time.strftime("%Y-%m-%d_%H-%M-%S")
     title = f"{grammar.__class__.__name__}_{['', 'eps'][has_eps]}{now}"
-    _generate_plot(metrics, "Evaluation", title)
 
+    acc = _generate_plot(metrics, "Evaluation", title)
+    _dump_count(title, count, acc)
     stats = _gen_stats(metrics)
 
     print(f"Grammar: {grammar.__class__.__name__}")

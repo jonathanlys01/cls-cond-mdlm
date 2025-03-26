@@ -300,11 +300,35 @@ def _ppl_eval(config, logger, tokenizer):
 
 
 def _eval_infill(config, logger, tokenizer):
-    logger.info("Evaluating infilling task.")
+    logger.info("Infilling text samples.")
+
+    assert config.data.train.startswith("grammar"), "Infilling only supported for grammar datasets."
+
     model = _load_from_checkpoint(config=config, tokenizer=tokenizer)
-    # eval_infill(config, logger, tokenizer, model)
-    print(model)
-    raise NotImplementedError("Infilling task not implemented.")
+
+    _, valid_ds = dataloader.get_dataloaders(config, tokenizer, skip_train=True)  # ignore train data
+
+    all_texts = []
+    raw_texts = []
+
+    for batch in valid_ds:
+        clean_ids = batch["input_ids"].to("cuda")
+        init_x = model.noise_sample(rate=0.3, x_0=clean_ids)  # TODO: make rate configurable (hardcoded for now)
+
+        samples = model.restore_model_and_sample(num_steps=config.sampling.steps, init_x=init_x)
+
+        text_samples = model.tokenizer.batch_decode(samples, skip_special_tokens=True)
+        raw_samples = model.tokenizer.batch_decode(samples, skip_special_tokens=False)
+
+        all_texts.extend(text_samples)
+        raw_texts.extend(raw_samples)
+
+    with fsspec.open("{}/infilling_samples.txt".format(config.checkpointing.save_dir), "w") as fp:
+        for text, raw_text in zip(all_texts, raw_texts):
+            to_write = f"Generated text: {text}\nRaw text (with special tokens): {raw_text}\n\n"
+            fp.write(to_write)
+
+    grammar_eval(all_texts, config.data.train, config.data.max_eps_rate > 0)
 
 
 def _train(config, logger, tokenizer):

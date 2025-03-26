@@ -560,6 +560,24 @@ class Diffusion(L.LightningModule):
     def _sample_prior(self, *batch_dims):
         return self.mask_index * torch.ones(*batch_dims, dtype=torch.int64)
 
+    def noise_sample(self, rate: float, x_0: torch.Tensor):
+        if rate == 0:
+            return x_0
+
+        B, L = x_0.shape
+        num_el = B * L
+        num_masked = int(rate * num_el)
+
+        mask_indices = torch.randperm(num_el)[:num_masked]  # shape (num_masked,)
+
+        mask = torch.zeros(num_el, dtype=torch.bool, device=x_0.device)
+        mask[mask_indices] = True
+        mask = mask.view(B, L)
+
+        x = x_0.clone()
+        x[mask] = self.mask_index
+        return x
+
     def _ddpm_caching_update(self, x, t, dt, p_x0=None, labels=None, init_x=None):  # noqa: PLR0913
         assert self.config.noise.type == "loglinear"
         sigma_t, _ = self.noise(t)
@@ -580,7 +598,7 @@ class Diffusion(L.LightningModule):
         copy_flag = (x != self.mask_index).to(x.dtype)
         ret = copy_flag * x + (1 - copy_flag) * _x
 
-        if init_x:
+        if init_x is not None:
             keep_flag = (init_x != self.mask_index).to(x.dtype)
             ret = keep_flag * init_x + (1 - keep_flag) * ret
 
@@ -612,7 +630,7 @@ class Diffusion(L.LightningModule):
         copy_flag = (x != self.mask_index).to(x.dtype)
         ret = copy_flag * x + (1 - copy_flag) * _x
 
-        if init_x:
+        if init_x is not None:
             keep_flag = (init_x != self.mask_index).to(x.dtype)
             ret = keep_flag * init_x + (1 - keep_flag) * ret
 
@@ -655,7 +673,7 @@ class Diffusion(L.LightningModule):
 
         start = 0
 
-        if init_x:
+        if init_x is not None:
             mask_rate = (init_x == self.mask_index).sum() / init_x.numel()
             start = int(mask_rate * num_steps)
 

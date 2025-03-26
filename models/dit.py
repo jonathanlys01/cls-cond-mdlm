@@ -439,18 +439,11 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
                 print("Using probability condition method")
 
             self.cond_embed = ConditionEmbedder(config.model.cond_method, config.model.cond_dim, **kwargs)
+            self.conditional = True
 
         else:
-            config.model.cond_method = "label"
-            n_classes = 0
-            dropout_p = 0.0
-
-            self.cond_embed = ConditionEmbedder(
-                "label",
-                config.model.cond_dim,
-                num_classes=n_classes,
-                dropout_prob=dropout_p,
-            )  # this is a dummy condition embedder
+            self.cond_embed = None
+            self.conditional = False
 
         # WARNING: Always make sure that the number of classes of the dataset is correct
 
@@ -491,7 +484,7 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
 
         # x = self.ape(x, indices)
 
-        if labels is None:
+        if labels is None or not self.conditional:
             c = F.silu(self.sigma_map(sigma))
         else:
             c = F.silu(self.sigma_map(sigma) + self.cond_embed(labels))
@@ -508,7 +501,7 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
         return x
 
     def forward_with_cfg(self, indices, sigma, labels, cfg_scale):
-        if self.cond_embed.method == "label":
+        if self.conditional and self.cond_embed.method == "label":
             indices = torch.cat([indices, indices], dim=0)
             sigma = torch.cat([sigma, sigma], dim=0)
             labels_null = torch.full_like(labels, self.cond_embed.num_classes)

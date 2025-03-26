@@ -26,11 +26,11 @@ logger = get_logger(__name__)
 N_WORKERS = 8
 
 CARDINAL_MAP = {
-    "_balanced_parentheses": {"train": 500_000, "validation": 10_000},
-    "_parity": {"train": 100_000, "validation": 10_000},
-    "_alternating_ab": {"train": 100_000, "validation": 10_000},
-    "_balanced_ab": {"train": 200_000, "validation": 10_000},
-    "_palindrome": {"train": 200_000, "validation": 10_000},
+    "balanced_parentheses": {"train": 5_000_000, "validation": 10_000},
+    "parity": {"train": 500_000, "validation": 10_000},
+    "alternating_ab": {"train": 100_000, "validation": 10_000},
+    "balanced_ab": {"train": 200_000, "validation": 10_000},
+    "palindrome": {"train": 5_000_000, "validation": 10_000},
 }
 
 
@@ -404,7 +404,19 @@ def _generate_sample(i, grammar: Grammar, final_seq_len: int, max_epsilon: int) 
     return {"input_ids": seq_eps, "label": rate, "attention_mask": 1}  # dummy attention mask
 
 
-def generate_dataset(grammar: Grammar, n_samples: int, seq_len: int, n_epsilon: int) -> DataFrame:
+def _generate_sample_fixed(i, grammar: Grammar, final_seq_len: int, max_epsilon: int) -> dict:
+    if max_epsilon == 0:
+        seq = grammar.generate(final_seq_len)
+        seq_eps, rate = seq, 0.0
+    else:
+        random.seed(i)
+        seq = grammar.generate(final_seq_len - max_epsilon)
+        seq_eps, rate = merge_eps_seq(seq, max_epsilon, grammar.mapping["[EPS]"])
+
+    return {"input_ids": seq_eps, "label": rate, "attention_mask": 1}  # dummy attention mask
+
+
+def generate_dataset(grammar: Grammar, n_samples: int, seq_len: int, n_epsilon: int, offset: int) -> DataFrame:
     """
     Generates a dataset of sequences that satisfy the grammar rules
     """
@@ -414,15 +426,15 @@ def generate_dataset(grammar: Grammar, n_samples: int, seq_len: int, n_epsilon: 
 epsilon tokens with grammar {grammar.__class__.__name__}"
     )
 
-    # Trick: we use the range(n_samples) to generate the seed for the random number generator
-    # However, this means that the val and train will have the same samples
-    # hotfix: shift the sequence by a large random number (fixed for each n_samples)
-
-    random.seed(n_samples)
-    offset = random.randint(10_000_000, 100_000_000)
+    """gen_fn = partial(
+        _generate_sample,
+        grammar=grammar,
+        final_seq_len=seq_len,
+        max_epsilon=n_epsilon,
+    )"""
 
     gen_fn = partial(
-        _generate_sample,
+        _generate_sample_fixed,
         grammar=grammar,
         final_seq_len=seq_len,
         max_epsilon=n_epsilon,
@@ -472,11 +484,20 @@ def get_grammar_dataset(name: str, block_size: int, mode: str, cache_dir: str, m
 
     # if os.path.isfile(os.path.join(cache_dir, f"{name}_{mode}.parquet")):
     if False:  # temp disable cache
+        print(f"Loading {name}_{mode}.parquet from cache")
         dataset = pd.read_parquet(os.path.join(cache_dir, f"{name}_{mode}.parquet"))
 
     else:
         n_samples = CARDINAL_MAP[name][mode]
-        dataset = generate_dataset(grammar, n_samples, block_size, int(max_eps_rate * block_size))
+        add_offset = "validation" in mode  # add train len to validation offset
+        offset = CARDINAL_MAP[name]["train"] if add_offset else 0
+
+        print(
+            f"Generating a total of {int(max_eps_rate * block_size)} epsilon tokens \
+(resp. {block_size - int(max_eps_rate * block_size)} non-epsilon tokens)"
+        )
+
+        dataset = generate_dataset(grammar, n_samples, block_size, int(max_eps_rate * block_size), offset)
         os.makedirs(cache_dir, exist_ok=True)
         dataset.to_parquet(os.path.join(cache_dir, f"{name}_{mode}.parquet"))
 

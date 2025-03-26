@@ -12,105 +12,113 @@ START=$(date +%s)
 
 CST="mode=sample_eval \
   model=eps-tiny \
-  loader.eval_batch_size=4_096 \
-  sampling.num_sample_batches=100 \
+  loader.eval_batch_size=1_000 \
+  sampling.num_sample_batches=50 \
   backbone=dit \
   sampling.steps=$STEPS \
   loader.num_workers=16 \
   eval.compute_generative_perplexity=False \
-  hydra.run.dir=./db/grammar-eval-10"
-
-
+  hydra.run.dir=./db/a-grammar-eval-$STEPS"
 
 # palidrome ########################################
 
 # eps
-CPT="/Brain/private/$USER/cls-cond-mdlm/db/grammar_palindrome/2025.03.12/085549/checkpoints/last.ckpt"
+CPT="/Brain/private/$USER/cls-cond-mdlm/db/grammar_palindrome/2025.03.18/232051/checkpoints/best.ckpt"
 python main.py \
   $CST \
   eval.checkpoint_path=$CPT \
   data=grammar_palindrome \
-  data.max_eps_rate=0.3
+  data.max_eps_rate=0.20 \
+  model.length=80
 
 # no eps
-CPT="/Brain/private/$USER/cls-cond-mdlm/db/grammar_palindrome/2025.03.12/090827/checkpoints/last.ckpt"
+CPT="/Brain/private/$USER/cls-cond-mdlm/db/grammar_palindrome/2025.03.19/005710/checkpoints/best.ckpt"
 python main.py \
   $CST \
   eval.checkpoint_path=$CPT \
   data=grammar_palindrome \
-  data.max_eps_rate=0.
+  data.max_eps_rate=0 \
+  model.length=64
 
 # alternating ########################################
 
 # eps
-CPT="/Brain/private/$USER/cls-cond-mdlm/db/grammar_alternating_ab/2025.03.12/093507/checkpoints/last.ckpt"
+CPT="/Brain/private/$USER/cls-cond-mdlm/db/grammar_alternating_ab/2025.03.19/030043/checkpoints/best.ckpt"
 python main.py \
   $CST \
   eval.checkpoint_path=$CPT \
   data=grammar_alternating_ab \
-  data.max_eps_rate=0.3
+  data.max_eps_rate=0.20 \
+  model.length=80
 
 # no eps
-CPT="/Brain/private/$USER/cls-cond-mdlm/db/grammar_alternating_ab/2025.03.12/094605/checkpoints/last.ckpt"
+CPT="/Brain/private/$USER/cls-cond-mdlm/db/grammar_alternating_ab/2025.03.19/031227/checkpoints/best.ckpt"
 python main.py \
   $CST \
   eval.checkpoint_path=$CPT \
   data=grammar_alternating_ab \
-  data.max_eps_rate=0.
+  data.max_eps_rate=0 \
+  model.length=64
 
 # balanced ab ########################################
 
 # eps
-CPT="/Brain/private/$USER/cls-cond-mdlm/db/grammar_balanced_ab/2025.03.12/092122/checkpoints/last.ckpt"  
+CPT="/Brain/private/$USER/cls-cond-mdlm/db/grammar_balanced_ab/2025.03.19/032334/checkpoints/best.ckpt"
 python main.py \
   $CST \
   eval.checkpoint_path=$CPT \
   data=grammar_balanced_ab \
-  data.max_eps_rate=0.3
+  data.max_eps_rate=0.20 \
+  model.length=80
 
 # no eps
-CPT="/Brain/private/$USER/cls-cond-mdlm/db/grammar_balanced_ab/2025.03.12/093614/checkpoints/last.ckpt"
+CPT="/Brain/private/$USER/cls-cond-mdlm/db/grammar_balanced_ab/2025.03.19/033705/checkpoints/best.ckpt"
 python main.py \
   $CST \
   eval.checkpoint_path=$CPT \
   data=grammar_balanced_ab \
-  data.max_eps_rate=0.
+  data.max_eps_rate=0 \
+  model.length=64
 
 # balanced parenthesis ########################################
 
 # eps
-CPT="/Brain/private/$USER/cls-cond-mdlm/db/grammar_balanced_parentheses/2025.03.12/094830/checkpoints/last.ckpt"
+CPT="/Brain/private/$USER/cls-cond-mdlm/db/grammar_balanced_parentheses/2025.03.19/034935/checkpoints/best.ckpt"
 python main.py \
   $CST \
   eval.checkpoint_path=$CPT \
   data=grammar_balanced_parentheses \
-  data.max_eps_rate=0.3
+  data.max_eps_rate=0.20 \
+  model.length=80
 
 # no eps
-CPT="/Brain/private/$USER/cls-cond-mdlm/db/grammar_balanced_parentheses/2025.03.12/100617/checkpoints/last.ckpt"
+CPT="/Brain/private/$USER/cls-cond-mdlm/db/grammar_balanced_parentheses/2025.03.19/052824/checkpoints/best.ckpt"
 python main.py \
   $CST \
   eval.checkpoint_path=$CPT \
   data=grammar_balanced_parentheses \
-  data.max_eps_rate=0.
+  data.max_eps_rate=0 \
+  model.length=64
 
 # parity ########################################
 
 # eps
-CPT="/Brain/private/$USER/cls-cond-mdlm/db/grammar_parity/2025.03.12/002939/checkpoints/last.ckpt"
+CPT="/Brain/private/$USER/cls-cond-mdlm/db/grammar_parity/2025.03.19/022532/checkpoints/best.ckpt"
 python main.py \
   $CST \
   eval.checkpoint_path=$CPT \
   data=grammar_parity \
-  data.max_eps_rate=0.3
+  data.max_eps_rate=0.20 \
+  model.length=80
 
 # no eps
-CPT="/Brain/private/$USER/cls-cond-mdlm/db/grammar_parity/2025.03.12/004031/checkpoints/last.ckpt"
+CPT="/Brain/private/$USER/cls-cond-mdlm/db/grammar_parity/2025.03.19/024320/checkpoints/best.ckpt"
 python main.py \
   $CST \
   eval.checkpoint_path=$CPT \
   data=grammar_parity \
-  data.max_eps_rate=0.
+  data.max_eps_rate=0 \
+  model.length=64
 
 END=$(date +%s)
 

@@ -9,7 +9,7 @@ scale_by_sigma: True
 dropout: 0.1
 tie_word_embeddings: False
 # Epsilon-rate conditional implementation of MDLM
-conditional: True
-cond_method: "proba" # probability-based conditioning
-proba_method: "bucket" # bucket + embed 
+conditional: False
+# cond_method: "proba" # probability-based conditioning
+# proba_method: "bucket" # bucket + embed 
 bias_scale: 0.0
